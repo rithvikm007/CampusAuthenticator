@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+import re
 
 
 def extract_login_data(html):
@@ -27,6 +28,22 @@ def extract_login_data(html):
         "magic": magic["value"],
         "redir": redir["value"]
     }
+
+
+import re
+
+
+def extract_auth_url(html):
+
+    match = re.search(
+        r'href="([^"]*fgtauth[^"]*)"',
+        html
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
 
 
 if __name__ == "__main__":
