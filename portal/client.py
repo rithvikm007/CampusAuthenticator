@@ -39,63 +39,68 @@ class PortalClient:
 
     def check_auth(self):
         """
-        Checks whether the network is already
-        authenticated by trying to reach a plain
-        HTTP site.
+        Checks whether normal Internet access is available.
 
-        Returns True if internet works (no portal
-        redirect), False if captive portal intercepts.
+        Returns True if at least one connectivity check
+        succeeds without being redirected to the captive portal.
         """
 
-        try:
-            response = self.session.get(
-                "http://neverssl.com",
-                timeout=5
-            )
+        urls = [
+            "http://connectivitycheck.gstatic.com/generate_204",
+            "http://neverssl.com",
+        ]
 
-            if "fgtauth" in response.url:
-                return False
+        for url in urls:
 
-            return True
+            try:
 
-        except Exception:
-            return False
+                response = self.session.get(
+                    url,
+                    timeout=5,
+                    allow_redirects=True
+                )
+
+                if "fgtauth" in response.url:
+                    continue
+
+                if response.status_code in (200, 204):
+                    return True
+
+            except requests.RequestException:
+                continue
+
+        return False
 
 
     def get_auth_page(self):
 
         print("Triggering captive portal...")
 
-
         response = self.session.get(
             "http://neverssl.com",
-            timeout=5
+            timeout=5,
+            allow_redirects=True
         )
-
 
         print("\nCurrent URL:")
         print(response.url)
-
 
         print(
             "Status:",
             response.status_code
         )
 
-
         if "fgtauth" not in response.url:
 
             print(
-                "Did not reach authentication page"
+                "Captive portal did not intercept the request"
             )
 
             return None
 
-
         print(
             "\nAuthentication page reached"
         )
-
 
         return response
 
@@ -157,27 +162,27 @@ class PortalClient:
 
             if response.status_code in (302, 303):
 
-                self.keepalive_url = (
-                    response.headers.get("Location")
-                )
+                self.keepalive_url = response.headers.get("Location")
+
+                if not self.keepalive_url:
+                    print("Login succeeded but no keepalive URL was provided")
+                    return False
 
                 print(
                     "Keepalive URL:",
                     self.keepalive_url
                 )
 
-                # GET the keepalive URL to activate
-                # the session on the firewall.
-                # This is what the browser does after
-                # following the 303 redirect.
                 try:
                     self.session.get(
                         self.keepalive_url,
                         timeout=10
                     )
+
                     print(
                         "Keepalive page loaded"
                     )
+
                 except Exception as e:
                     print(
                         "Keepalive load warning:",

@@ -1,6 +1,7 @@
 import sys
 import datetime
 import os
+import threading
 from network.events import watch_network_events
 from network.wifi import is_hostel_wifi
 from portal.client import PortalClient
@@ -106,8 +107,9 @@ class AuthController:
 
     States:
         DISCONNECTED   — waiting for a connection
+        CONNECTED      — Internet works, but no keepalive URL is known
         AUTHENTICATING — login in progress
-        AUTHENTICATED  — keepalive running
+        AUTHENTICATED  — authenticated with keepalive running
     """
 
     def __init__(self):
@@ -115,120 +117,362 @@ class AuthController:
         self.state = "DISCONNECTED"
         self.client = PortalClient()
 
+        # Prevent multiple WMI events from running
+        # authentication logic at the same time.
+        self.event_lock = threading.Lock()
+
 
     def handle_event(self, status):
 
-        print(
-            f"\nEvent: {status}"
-            f"  [state={self.state}]"
-        )
+        # WMI can generate duplicate events very close
+        # together. Only allow one event to be processed
+        # at a time.
+        with self.event_lock:
 
+            print(
+                f"\nEvent: {status}"
+                f"  [state={self.state}]"
+            )
 
-        if status == "Connected":
-            self._on_connected()
+            if status == "Connected":
+                self._on_connected()
 
-        elif status == "Disconnected":
-            self._on_disconnected()
+            elif status == "Disconnected":
+                self._on_disconnected()
 
 
     def _on_connected(self):
 
-        # If we think we're authenticated, verify it.
-        # This handles waking from Sleep/Hibernate where
-        # the session might have expired on the firewall.
-        if self.state == "AUTHENTICATED":
-            print("Already authenticated — verifying session...")
-            if self.client.check_auth():
-                print("Session still valid — ignoring event")
-                return
-            else:
-                print("Session expired (likely during sleep). Re-authenticating...")
-                self.client.stop_keepalive()
-                self.state = "DISCONNECTED"
-                # Fall through to the authentication logic below
-
-        # Currently authenticating — ignore
-        if self.state == "AUTHENTICATING":
-            print("Authentication in progress — ignoring")
-            return
-
-        # Check if this is the target network
+        # Check that we are actually connected to the
+        # hostel WiFi before doing anything.
         if not is_hostel_wifi():
             print("Not hostel WiFi — ignoring")
             return
 
-        # Attempt authentication
+
+        # If we think we're authenticated, verify the
+        # session. This handles waking from Sleep/Hibernate.
+        if self.state == "AUTHENTICATED":
+
+            print(
+                "Already authenticated — verifying session..."
+            )
+
+            if self.client.check_auth():
+
+                print(
+                    "Session still valid — ignoring event"
+                )
+
+                return
+
+            else:
+
+                print(
+                    "Session expired (likely during sleep). "
+                    "Re-authenticating..."
+                )
+
+                self.client.stop_keepalive()
+
+                self.state = "DISCONNECTED"
+
+
+        # Another event may arrive while authentication
+        # is already running.
+        if self.state == "AUTHENTICATING":
+
+            print(
+                "Authentication in progress — ignoring"
+            )
+
+            return
+
+
+        # Network may have just recovered from sleep.
+        # Give Windows/router/DNS a few seconds to settle.
+        print(
+            "Waiting for network to stabilize..."
+        )
+
+        import time
+        time.sleep(5)
+
+
+        # Check whether Internet is already working.
+        #
+        # If it is, the machine is already authenticated,
+        # but we may not know the FortiGate keepalive URL.
+        print(
+            "Checking network connectivity..."
+        )
+
+        if self.client.check_auth():
+
+            print(
+                "Internet is already working."
+            )
+
+            if self.client.keepalive_url:
+
+                print(
+                    "Keepalive URL available — "
+                    "session is being maintained"
+                )
+
+                self.state = "AUTHENTICATED"
+
+            else:
+
+                print(
+                    "Already authenticated, but no keepalive "
+                    "URL is available"
+                )
+
+                self.state = "CONNECTED"
+
+            return
+
+
+        # Attempt authentication.
         self.state = "AUTHENTICATING"
-        print("Hostel WiFi detected — authenticating...")
 
-        success = self.client.login()
+        print(
+            "Hostel WiFi detected — authenticating..."
+        )
 
-        if success:
-            self.state = "AUTHENTICATED"
-            self.client.start_keepalive()
-        else:
-            self.state = "DISCONNECTED"
-            print("Login failed — will retry on next event")
+
+        # Retry a few times because immediately after
+        # waking from sleep DNS/network connectivity
+        # may not be ready yet.
+        max_attempts = 5
+
+        for attempt in range(1, max_attempts + 1):
+
+            print(
+                f"Authentication attempt "
+                f"{attempt}/{max_attempts}"
+            )
+
+            success = self.client.login()
+
+            if success:
+
+                self.state = "AUTHENTICATED"
+
+                self.client.start_keepalive()
+
+                print(
+                    "Authentication successful — "
+                    "keepalive running"
+                )
+
+                return
+
+
+            if attempt < max_attempts:
+
+                print(
+                    "Authentication attempt failed — "
+                    "waiting before retry..."
+                )
+
+                time.sleep(5)
+
+
+        # All attempts failed.
+        self.state = "DISCONNECTED"
+
+        print(
+            "Authentication failed after "
+            f"{max_attempts} attempts"
+        )
 
 
     def _on_disconnected(self):
 
         if self.state == "AUTHENTICATED":
-            print("WiFi disconnected — stopping keepalive and logging out...")
+
+            print(
+                "WiFi disconnected — "
+                "stopping keepalive and logging out..."
+            )
 
             self.client.stop_keepalive()
             self.client.logout()
 
+        elif self.state == "AUTHENTICATING":
+
+            print(
+                "WiFi disconnected during authentication"
+            )
+
+            self.client.stop_keepalive()
+
         self.state = "DISCONNECTED"
-        print("WiFi disconnected — ready to reconnect")
+
+        print(
+            "WiFi disconnected — ready to reconnect"
+        )
 
 
     def run(self):
 
-        print("CampusAuthenticator started\n")
+        print(
+            "CampusAuthenticator started\n"
+        )
 
-        # Initial startup check
-        print("Checking initial network state...")
+
+        # Initial startup check.
+        print(
+            "Checking initial network state..."
+        )
+
+
         if is_hostel_wifi():
-            print("Already connected to hostel WiFi")
+
+            print(
+                "Already connected to hostel WiFi"
+            )
+
+
+            # Check whether Internet is already working.
             if self.client.check_auth():
-                self.state = "AUTHENTICATED"
-                print("Already authenticated (internet is working)")
-                # We can't easily resume the keepalive loop because we don't have the token.
-                # The session will eventually expire and a reconnect/disconnect will fix it,
-                # or we could force a logout/login.
-                # For now, we just mark it authenticated.
-            else:
-                print("Not authenticated. Authenticating now...")
-                self.state = "AUTHENTICATING"
-                if self.client.login():
+
+                print(
+                    "Already authenticated "
+                    "(internet is working)"
+                )
+
+                if self.client.keepalive_url:
+
                     self.state = "AUTHENTICATED"
-                    self.client.start_keepalive()
+
+                    print(
+                        "Keepalive URL available — "
+                        "session is being maintained"
+                    )
+
                 else:
-                    self.state = "DISCONNECTED"
-                    print("Initial login failed")
+
+                    self.state = "CONNECTED"
+
+                    print(
+                        "Internet is working, but no keepalive "
+                        "URL is available"
+                    )
+
+                    print(
+                        "Waiting for a fresh authentication session "
+                        "to obtain the keepalive URL"
+                    )
+
+
+            else:
+
+                print(
+                    "Not authenticated. "
+                    "Authenticating now..."
+                )
+
+                self._authenticate_with_retry()
+
+
         else:
-            print("Not connected to hostel WiFi")
+
+            print(
+                "Not connected to hostel WiFi"
+            )
+
 
         try:
-            watch_network_events(self.handle_event)
+
+            watch_network_events(
+                self.handle_event
+            )
+
         except KeyboardInterrupt:
+
             pass
+
         finally:
+
             self._shutdown()
+
+
+    def _authenticate_with_retry(self):
+
+        import time
+
+        self.state = "AUTHENTICATING"
+
+        max_attempts = 5
+
+        for attempt in range(1, max_attempts + 1):
+
+            print(
+                f"Authentication attempt "
+                f"{attempt}/{max_attempts}"
+            )
+
+            success = self.client.login()
+
+            if success:
+
+                self.state = "AUTHENTICATED"
+
+                self.client.start_keepalive()
+
+                print(
+                    "Authentication successful — "
+                    "keepalive running"
+                )
+
+                return True
+
+
+            if attempt < max_attempts:
+
+                print(
+                    "Authentication failed — "
+                    "waiting before retry..."
+                )
+
+                time.sleep(5)
+
+
+        self.state = "DISCONNECTED"
+
+        print(
+            "Authentication failed after "
+            f"{max_attempts} attempts"
+        )
+
+        return False
 
 
     def _shutdown(self):
 
-        print("\nShutting down...")
+        print(
+            "\nShutting down..."
+        )
+
 
         if self.state == "AUTHENTICATED":
+
             self.client.stop_keepalive()
+
             self.client.logout()
 
-        print("Goodbye")
+
+        elif self.state == "AUTHENTICATING":
+
+            self.client.stop_keepalive()
 
 
+        print(
+            "Goodbye"
+        )
 
 if __name__ == "__main__":
 
