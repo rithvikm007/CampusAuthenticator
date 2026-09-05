@@ -1,6 +1,30 @@
+import sys
+import datetime
 from network.events import watch_network_events
 from network.wifi import is_hostel_wifi
 from portal.client import PortalClient
+
+class TimestampLogger:
+    def __init__(self, stream):
+        self.stream = stream
+        self.at_line_start = True
+
+    def write(self, message):
+        if not message:
+            return
+        
+        if self.at_line_start and message.strip():
+            timestamp = datetime.datetime.now().strftime("[%Y-%m-%d %H:%M:%S] ")
+            self.stream.write(timestamp)
+            
+        self.stream.write(message)
+        self.at_line_start = message.endswith('\n')
+        
+    def flush(self):
+        self.stream.flush()
+
+sys.stdout = TimestampLogger(sys.stdout)
+sys.stderr = TimestampLogger(sys.stderr)
 
 
 class AuthController:
@@ -113,6 +137,8 @@ class AuthController:
         try:
             watch_network_events(self.handle_event)
         except KeyboardInterrupt:
+            pass
+        finally:
             self._shutdown()
 
 

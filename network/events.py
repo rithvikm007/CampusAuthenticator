@@ -21,8 +21,15 @@ def watch_network_events(callback):
         7: "Disconnected",
     }
 
+    import os
+
     while True:
         try:
+            if os.path.exists("stop.flag"):
+                print("Stop flag detected. Stopping event listener...")
+                os.remove("stop.flag")
+                break
+
             event = watcher(timeout_ms=1000)
 
             if not event.Name:
