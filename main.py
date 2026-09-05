@@ -174,7 +174,10 @@ class AuthController:
     def _on_disconnected(self):
 
         if self.state == "AUTHENTICATED":
+            print("WiFi disconnected — stopping keepalive and logging out...")
+
             self.client.stop_keepalive()
+            self.client.logout()
 
         self.state = "DISCONNECTED"
         print("WiFi disconnected — ready to reconnect")
