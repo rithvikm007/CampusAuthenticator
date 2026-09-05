@@ -36,11 +36,19 @@ class AuthController:
 
     def _on_connected(self):
 
-        # Already authenticated — ignore
-        # (handles duplicate Connected events)
+        # If we think we're authenticated, verify it.
+        # This handles waking from Sleep/Hibernate where
+        # the session might have expired on the firewall.
         if self.state == "AUTHENTICATED":
-            print("Already authenticated — ignoring")
-            return
+            print("Already authenticated — verifying session...")
+            if self.client.check_auth():
+                print("Session still valid — ignoring event")
+                return
+            else:
+                print("Session expired (likely during sleep). Re-authenticating...")
+                self.client.stop_keepalive()
+                self.state = "DISCONNECTED"
+                # Fall through to the authentication logic below
 
         # Currently authenticating — ignore
         if self.state == "AUTHENTICATING":
