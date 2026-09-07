@@ -72,6 +72,76 @@ class PortalClient:
         return False
 
 
+    def recover_session(self):
+        """
+        Attempts to recover the previously known FortiGate
+        authentication session using the existing keepalive URL.
+
+        Returns True if the session appears to still be valid.
+        Returns False if there is no previous session or if
+        the session can no longer be used.
+        """
+
+        if not self.keepalive_url:
+
+            print(
+                "No previous keepalive URL — "
+                "session recovery unavailable"
+            )
+
+            return False
+
+
+        print(
+            "Attempting to recover previous FortiGate session..."
+        )
+
+        try:
+
+            response = self.session.get(
+                self.keepalive_url,
+                timeout=10,
+                allow_redirects=False
+            )
+
+            print(
+                "Session recovery status:",
+                response.status_code
+            )
+
+
+            # A successful keepalive request means the
+            # existing session is still usable.
+            if response.status_code == 200:
+
+                print(
+                    "Previous FortiGate session is still valid"
+                )
+
+                return True
+
+
+            print(
+                "Previous FortiGate session is no longer valid"
+            )
+
+            self.keepalive_url = None
+
+            return False
+
+
+        except requests.RequestException as e:
+
+            print(
+                "Session recovery failed:",
+                repr(e)
+            )
+
+            self.keepalive_url = None
+
+            return False
+
+
     def get_auth_page(self):
 
         print("Triggering captive portal...")
@@ -103,7 +173,6 @@ class PortalClient:
         )
 
         return response
-
 
 
     def login(self):
@@ -165,15 +234,23 @@ class PortalClient:
                 self.keepalive_url = response.headers.get("Location")
 
                 if not self.keepalive_url:
-                    print("Login succeeded but no keepalive URL was provided")
+
+                    print(
+                        "Login succeeded but no keepalive URL "
+                        "was provided"
+                    )
+
                     return False
+
 
                 print(
                     "Keepalive URL:",
                     self.keepalive_url
                 )
 
+
                 try:
+
                     self.session.get(
                         self.keepalive_url,
                         timeout=10
@@ -184,10 +261,12 @@ class PortalClient:
                     )
 
                 except Exception as e:
+
                     print(
                         "Keepalive load warning:",
                         repr(e)
                     )
+
 
                 print(
                     "Authentication successful"
@@ -225,12 +304,22 @@ class PortalClient:
         """
 
         if not self.keepalive_url:
-            print("No keepalive URL — skipping")
+
+            print(
+                "No keepalive URL — skipping"
+            )
+
             return
 
+
         if self._keepalive_thread is not None:
-            print("Keepalive already running")
+
+            print(
+                "Keepalive already running"
+            )
+
             return
+
 
         self._stop_event.clear()
 
@@ -241,7 +330,9 @@ class PortalClient:
 
         self._keepalive_thread.start()
 
-        print("Keepalive started")
+        print(
+            "Keepalive started"
+        )
 
 
     def stop_keepalive(self):
@@ -253,34 +344,56 @@ class PortalClient:
         if self._keepalive_thread is None:
             return
 
-        print("Stopping keepalive...")
+
+        print(
+            "Stopping keepalive..."
+        )
 
         self._stop_event.set()
 
-        self._keepalive_thread.join(timeout=60)
+        self._keepalive_thread.join(
+            timeout=60
+        )
 
         self._keepalive_thread = None
 
-        print("Keepalive stopped")
+        print(
+            "Keepalive stopped"
+        )
 
 
     def logout(self):
         """
-        Sends a logout request to the firewall
+        Attempts to send a logout request to the firewall
         using the same token from the keepalive URL.
+
+        Returns True if the logout request succeeds.
+        Returns False if the FortiGate cannot be reached
+        or the logout request fails.
         """
 
         if not self.keepalive_url:
-            print("No active session to logout")
-            return
+
+            print(
+                "No active session to logout"
+            )
+
+            return False
+
 
         logout_url = self.keepalive_url.replace(
-            "/keepalive?", "/logout?"
+            "/keepalive?",
+            "/logout?"
         )
 
-        print(f"Logging out: {logout_url}")
+
+        print(
+            f"Logging out: {logout_url}"
+        )
+
 
         try:
+
             response = self.session.get(
                 logout_url,
                 timeout=10
@@ -291,13 +404,30 @@ class PortalClient:
                 response.status_code
             )
 
-        except Exception as e:
+
+            if response.status_code == 200:
+
+                self.keepalive_url = None
+
+                return True
+
+
+            print(
+                "Logout request did not return "
+                "a successful status"
+            )
+
+            return False
+
+
+        except requests.RequestException as e:
+
             print(
                 "Logout error:",
                 repr(e)
             )
 
-        self.keepalive_url = None
+            return False
 
 
     def _keepalive_loop(self):
@@ -315,10 +445,13 @@ class PortalClient:
 
             while elapsed < KEEPALIVE_INTERVAL:
 
-                if self._stop_event.wait(timeout=30):
+                if self._stop_event.wait(
+                    timeout=30
+                ):
                     return
 
                 elapsed += 30
+
 
             # Time to refresh
             try:
@@ -345,7 +478,6 @@ class PortalClient:
                 )
 
 
-
 if __name__ == "__main__":
 
     client = PortalClient()
@@ -364,18 +496,27 @@ if __name__ == "__main__":
         print(
             "\nKeepalive thread is running."
         )
+
         print(
             "Press Ctrl+C to stop.\n"
         )
 
         try:
+
             # Block main thread until interrupted.
             # Use short timeouts so Ctrl+C works
             # on Windows.
             while not client._stop_event.is_set():
-                client._stop_event.wait(timeout=1)
+
+                client._stop_event.wait(
+                    timeout=1
+                )
 
         except KeyboardInterrupt:
+
             client.stop_keepalive()
             client.logout()
-            print("Done")
+
+            print(
+                "Done"
+            )

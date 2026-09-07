@@ -5,6 +5,7 @@ import threading
 from network.events import watch_network_events
 from network.wifi import is_hostel_wifi
 from portal.client import PortalClient
+from notifications import notify
 
 class TimestampLogger:
     def __init__(self, stream):
@@ -199,10 +200,28 @@ class AuthController:
         time.sleep(5)
 
 
+        # If we have a previous keepalive URL,
+        # first try to recover that FortiGate session.
+        if self.client.keepalive_url:
+
+            if self.client.recover_session():
+
+                self.state = "AUTHENTICATED"
+
+                self.client.start_keepalive()
+
+                print(
+                    "Previous session recovered — "
+                    "keepalive running"
+                )
+
+                return
+
+
         # Check whether Internet is already working.
         #
         # If it is, the machine is already authenticated,
-        # but we may not know the FortiGate keepalive URL.
+        # but we do not know the FortiGate session URL.
         print(
             "Checking network connectivity..."
         )
@@ -213,23 +232,12 @@ class AuthController:
                 "Internet is already working."
             )
 
-            if self.client.keepalive_url:
+            print(
+                "Already authenticated, but no keepalive "
+                "URL is available"
+            )
 
-                print(
-                    "Keepalive URL available — "
-                    "session is being maintained"
-                )
-
-                self.state = "AUTHENTICATED"
-
-            else:
-
-                print(
-                    "Already authenticated, but no keepalive "
-                    "URL is available"
-                )
-
-                self.state = "CONNECTED"
+            self.state = "CONNECTED"
 
             return
 
@@ -267,6 +275,11 @@ class AuthController:
                     "keepalive running"
                 )
 
+                notify(
+                    "Authentication successful",
+                    "CampusAuthenticator is now connected."
+                )
+
                 return
 
 
@@ -288,6 +301,11 @@ class AuthController:
             f"{max_attempts} attempts"
         )
 
+        notify(
+            "Authentication failed",
+            f"Could not authenticate after {max_attempts} attempts."
+        )
+
 
     def _on_disconnected(self):
 
@@ -299,7 +317,23 @@ class AuthController:
             )
 
             self.client.stop_keepalive()
-            self.client.logout()
+
+            logout_success = self.client.logout()
+
+            if logout_success:
+
+                notify(
+                    "Logged out",
+                    "Wi-Fi disconnected. CampusAuthenticator logged out."
+                )
+
+            else:
+
+                notify(
+                    "Logout unavailable",
+                    "Wi-Fi disconnected before CampusAuthenticator "
+                    "could reach FortiGate."
+                )
 
         elif self.state == "AUTHENTICATING":
 
@@ -428,6 +462,11 @@ class AuthController:
                     "keepalive running"
                 )
 
+                notify(
+                    "Authentication successful",
+                    "CampusAuthenticator is now connected."
+                )
+
                 return True
 
 
@@ -446,6 +485,11 @@ class AuthController:
         print(
             "Authentication failed after "
             f"{max_attempts} attempts"
+        )
+
+        notify(
+            "Authentication failed",
+            f"Could not authenticate after {max_attempts} attempts."
         )
 
         return False
