@@ -370,30 +370,52 @@ class AuthController:
             )
 
 
-            # Check whether Internet is already working.
-            if self.client.check_auth():
+            # If a previous FortiGate session was persisted,
+            # first try to recover it.
+            if self.client.keepalive_url:
 
                 print(
-                    "Already authenticated "
-                    "(internet is working)"
+                    "Previous session found — "
+                    "attempting session recovery..."
                 )
 
-                if self.client.keepalive_url:
+                if self.client.recover_session():
 
                     self.state = "AUTHENTICATED"
 
+                    self.client.start_keepalive()
+
                     print(
-                        "Keepalive URL available — "
-                        "session is being maintained"
+                        "Previous session recovered — "
+                        "keepalive running"
                     )
 
                 else:
 
+                    print(
+                        "Previous session could not be recovered"
+                    )
+
+
+            # If session recovery did not succeed,
+            # check whether Internet is already working.
+            if self.state != "AUTHENTICATED":
+
+                print(
+                    "Checking network connectivity..."
+                )
+
+                if self.client.check_auth():
+
+                    print(
+                        "Internet is already working."
+                    )
+
                     self.state = "CONNECTED"
 
                     print(
-                        "Internet is working, but no keepalive "
-                        "URL is available"
+                        "Already authenticated, but no known "
+                        "FortiGate session is available"
                     )
 
                     print(
@@ -402,14 +424,14 @@ class AuthController:
                     )
 
 
-            else:
+                else:
 
-                print(
-                    "Not authenticated. "
-                    "Authenticating now..."
-                )
+                    print(
+                        "Not authenticated. "
+                        "Authenticating now..."
+                    )
 
-                self._authenticate_with_retry()
+                    self._authenticate_with_retry()
 
 
         else:

@@ -3,6 +3,11 @@ import threading
 
 from portal.parser import extract_login_data
 from config import PORTAL_URL, USERNAME, PASSWORD
+from storage.session import (
+    save_session,
+    load_session,
+    clear_session
+)
 
 
 # Refresh interval in seconds.
@@ -32,7 +37,7 @@ class PortalClient:
             "Connection": "keep-alive",
         })
 
-        self.keepalive_url = None
+        self.keepalive_url = load_session()
         self._stop_event = threading.Event()
         self._keepalive_thread = None
 
@@ -125,6 +130,7 @@ class PortalClient:
                 "Previous FortiGate session is no longer valid"
             )
 
+            clear_session()
             self.keepalive_url = None
 
             return False
@@ -137,7 +143,6 @@ class PortalClient:
                 repr(e)
             )
 
-            self.keepalive_url = None
 
             return False
 
@@ -242,6 +247,7 @@ class PortalClient:
 
                     return False
 
+                save_session(self.keepalive_url)
 
                 print(
                     "Keepalive URL:",
@@ -407,6 +413,7 @@ class PortalClient:
 
             if response.status_code == 200:
 
+                clear_session()
                 self.keepalive_url = None
 
                 return True
