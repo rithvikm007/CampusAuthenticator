@@ -1,19 +1,9 @@
-import os
 import time
 
 import wmi
 
 
 def create_watcher():
-    """
-    Create a fresh WMI connection and network event watcher.
-
-    A WMI event subscription can become invalid after events
-    such as Sleep/Hibernate or other WMI/COM interruptions.
-
-    When that happens, the old watcher is discarded and a new
-    WMI connection and watcher are created.
-    """
 
     c = wmi.WMI()
 
@@ -26,9 +16,14 @@ def create_watcher():
     return watcher
 
 
-def watch_network_events(callback):
+def watch_network_events(
+    callback,
+    stop_event
+):
 
-    print("Network event listener started")
+    print(
+        "Network event listener started"
+    )
 
     states = {
         0: "Disconnected",
@@ -40,41 +35,23 @@ def watch_network_events(callback):
 
     watcher = create_watcher()
 
-    while True:
-
-        # Check for a requested shutdown before entering
-        # the WMI wait call.
-        if os.path.exists("stop.flag"):
-
-            print(
-                "Stop flag detected. "
-                "Stopping event listener..."
-            )
-
-            os.remove("stop.flag")
-
-            break
+    while not stop_event.is_set():
 
         try:
 
-            event = watcher(timeout_ms=1000)
+            event = watcher(
+                timeout_ms=1000
+            )
 
         except wmi.x_wmi_timed_out:
 
-            # Normal timeout.
-            #
-            # The 1-second timeout allows us to periodically
-            # check for stop.flag.
             continue
 
         except wmi.x_wmi as e:
 
-            # The WMI event subscription has failed.
-            #
-            # This can happen when the underlying WMI/COM
-            # subscription gets cancelled, for example after
-            # certain Sleep/Hibernate or network subsystem
-            # transitions.
+            if stop_event.is_set():
+                break
+
             print(
                 "WMI event watcher error:",
                 repr(e)
@@ -84,7 +61,8 @@ def watch_network_events(callback):
                 "Recreating network event watcher..."
             )
 
-            time.sleep(2)
+            if stop_event.wait(2):
+                break
 
             try:
 
@@ -105,15 +83,14 @@ def watch_network_events(callback):
                     "Will retry watcher creation..."
                 )
 
-                time.sleep(5)
+                if stop_event.wait(5):
+                    break
 
             continue
 
-        # Ignore adapters without a usable name.
         if not event.Name:
             continue
 
-        # Only handle Wi-Fi adapter events.
         if "Wi-Fi" not in event.Name:
             continue
 
@@ -124,8 +101,16 @@ def watch_network_events(callback):
 
         callback(status)
 
+    print(
+        "Network event listener stopped"
+    )
+
 
 if __name__ == "__main__":
+
+    import threading
+
+    stop_event = threading.Event()
 
     def test_callback(status):
 
@@ -136,8 +121,15 @@ if __name__ == "__main__":
 
     try:
 
-        watch_network_events(test_callback)
+        watch_network_events(
+            test_callback,
+            stop_event
+        )
 
     except KeyboardInterrupt:
 
-        print("\nListener stopped")
+        stop_event.set()
+
+        print(
+            "\nListener stopped"
+        )

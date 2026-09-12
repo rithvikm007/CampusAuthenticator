@@ -1,98 +1,58 @@
 import subprocess
-import re
 
 from config import HOSTEL_SSID
 
 
-def get_current_wifi():
-    """
-    Returns current WiFi information.
-
-    Returns:
-    {
-        "connected": bool,
-        "ssid": str | None
-    }
-    """
+def get_current_ssid():
 
     try:
+
         result = subprocess.run(
-            ["netsh", "wlan", "show", "interfaces"],
+            [
+                "netsh",
+                "wlan",
+                "show",
+                "interfaces"
+            ],
             capture_output=True,
             text=True,
-            encoding="utf-8"
+            encoding="utf-8",
+            errors="ignore"
         )
 
-        output = result.stdout
+        for line in result.stdout.splitlines():
 
-        # Extract connection state
-        state_match = re.search(
-            r"^\s*State\s*:\s*(.+)$",
-            output,
-            re.MULTILINE
-        )
+            line = line.strip()
 
-        if not state_match:
-            return {
-                "connected": False,
-                "ssid": None
-            }
+            if line.startswith("SSID") and not line.startswith("BSSID"):
 
-        state = state_match.group(1).strip().lower()
-
-        if state != "connected":
-            return {
-                "connected": False,
-                "ssid": None
-            }
-
-        # Extract SSID
-        ssid_match = re.search(
-            r"^\s*SSID\s*:\s*(.+)$",
-            output,
-            re.MULTILINE
-        )
-
-        if not ssid_match:
-            return {
-                "connected": True,
-                "ssid": None
-            }
-
-        return {
-            "connected": True,
-            "ssid": ssid_match.group(1).strip()
-        }
+                return line.split(":", 1)[1].strip()
 
     except Exception as e:
-        print(f"WiFi detection error: {e}")
 
-        return {
-            "connected": False,
-            "ssid": None
-        }
+        print(
+            "Failed to get current SSID:",
+            repr(e)
+        )
+
+    return None
 
 
 def is_hostel_wifi():
-    """
-    Returns True if connected to the configured hostel WiFi.
-    """
 
-    wifi = get_current_wifi()
+    ssid = get_current_ssid()
 
-    return (
-        wifi["connected"]
-        and wifi["ssid"] == HOSTEL_SSID
-    )
+    return ssid == HOSTEL_SSID
 
 
 if __name__ == "__main__":
 
-    info = get_current_wifi()
+    print(
+        "Current SSID:",
+        get_current_ssid()
+    )
 
-    print(info)
-
-    if is_hostel_wifi():
-        print("Hostel WiFi detected")
-    else:
-        print("Not connected to hostel WiFi")
+    print(
+        "Hostel WiFi:",
+        is_hostel_wifi()
+    )
