@@ -1,17 +1,19 @@
 from core.controller import AuthController
 from core.logger import setup_logging
-from notifications import setup_windows_toasts
+from gui.tray import TrayApplication
 
 
 def main():
 
     setup_logging()
 
-    setup_windows_toasts()
-
     controller = AuthController()
 
-    controller.run()
+    application = TrayApplication(
+        controller
+    )
+
+    application.run()
 
 
 if __name__ == "__main__":
