@@ -1,13 +1,37 @@
 import os
+
 from dotenv import load_dotenv
+
+from storage.config import load_config
 
 
 load_dotenv()
 
 
-# WiFi configuration
+# Application configuration
 
-HOSTEL_SSID = os.getenv("HOSTEL_SSID")
+saved_config = load_config()
+
+
+if saved_config:
+
+    HOSTEL_SSID = saved_config.get(
+        "ssid"
+    )
+
+    USERNAME = saved_config.get(
+        "username"
+    )
+
+    PASSWORD = saved_config.get(
+        "password"
+    )
+
+else:
+
+    HOSTEL_SSID = None
+    USERNAME = None
+    PASSWORD = None
 
 
 # Campus portal
@@ -16,31 +40,23 @@ PORTAL_IP = os.getenv("PORTAL_IP")
 PORTAL_PORT = os.getenv("PORTAL_PORT")
 
 
-# Credentials
+# Validate portal configuration
 
-USERNAME = os.getenv("CAMPUS_USERNAME")
-PASSWORD = os.getenv("CAMPUS_PASSWORD")
-
-
-# Validate configuration
-
-required_config = {
-    "HOSTEL_SSID": HOSTEL_SSID,
+required_portal_config = {
     "PORTAL_IP": PORTAL_IP,
     "PORTAL_PORT": PORTAL_PORT,
-    "CAMPUS_USERNAME": USERNAME,
-    "CAMPUS_PASSWORD": PASSWORD,
 }
 
 
 missing = [
     key
-    for key, value in required_config.items()
+    for key, value in required_portal_config.items()
     if value is None
 ]
 
 
 if missing:
+
     raise RuntimeError(
         "Missing configuration in .env: "
         + ", ".join(missing)

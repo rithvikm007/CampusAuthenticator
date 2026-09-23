@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from core.controller import AuthController, AuthState
+from gui.settings import SettingsPage
 
 
 class MainWindow(QMainWindow):
@@ -42,9 +44,9 @@ class MainWindow(QMainWindow):
             "CampusAuthenticator"
         )
 
-        self.resize(
+        self.setFixedSize(
             520,
-            480
+            500
         )
 
         self.setup_ui()
@@ -155,6 +157,21 @@ class MainWindow(QMainWindow):
                 color: #5f5f5f;
             }
 
+            QPushButton#settings_button {
+                background: transparent;
+                border: 1px solid transparent;
+                color: #a1a1aa;
+                font-size: 20px;
+                font-weight: 400;
+                padding: 2px;
+            }
+
+            QPushButton#settings_button:hover {
+                background: #292929;
+                border: 1px solid #303030;
+                color: #f5f5f5;
+            }
+
             QPushButton#refresh_button {
                 background: transparent;
                 border: 1px solid #303030;
@@ -196,8 +213,49 @@ class MainWindow(QMainWindow):
             central
         )
 
-        layout = QVBoxLayout(
+        outer_layout = QVBoxLayout(
             central
+        )
+
+        outer_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
+
+        self.pages = QStackedWidget()
+
+        outer_layout.addWidget(
+            self.pages
+        )
+
+        self.main_page = QWidget()
+
+        self.setup_main_page()
+
+        self.pages.addWidget(
+            self.main_page
+        )
+
+        self.settings_page = SettingsPage()
+
+        self.settings_page.saved.connect(
+            self.show_main_page
+        )
+
+        self.settings_page.cancelled.connect(
+            self.show_main_page
+        )
+
+        self.pages.addWidget(
+            self.settings_page
+        )
+
+    def setup_main_page(self):
+
+        layout = QVBoxLayout(
+            self.main_page
         )
 
         layout.setContentsMargins(
@@ -208,7 +266,15 @@ class MainWindow(QMainWindow):
         )
 
         layout.setSpacing(
-            12
+            8
+        )
+
+        header_layout = QHBoxLayout()
+
+        header_text_layout = QVBoxLayout()
+
+        header_text_layout.setSpacing(
+            2
         )
 
         title = QLabel(
@@ -227,16 +293,51 @@ class MainWindow(QMainWindow):
             "subtitle"
         )
 
-        layout.addWidget(
+        header_text_layout.addWidget(
             title
         )
 
-        layout.addWidget(
+        header_text_layout.addWidget(
             subtitle
         )
 
+        header_layout.addLayout(
+            header_text_layout
+        )
+
+        header_layout.addStretch()
+
+        self.settings_button = QPushButton(
+            "⚙"
+        )
+
+        self.settings_button.setObjectName(
+            "settings_button"
+        )
+
+        self.settings_button.setFixedSize(
+            34,
+            34
+        )
+
+        self.settings_button.setToolTip(
+            "Settings"
+        )
+
+        self.settings_button.clicked.connect(
+            self.show_settings_page
+        )
+
+        header_layout.addWidget(
+            self.settings_button
+        )
+
+        layout.addLayout(
+            header_layout
+        )
+
         layout.addSpacing(
-            8
+            4
         )
 
         status_card = QFrame()
@@ -251,9 +352,9 @@ class MainWindow(QMainWindow):
 
         status_layout.setContentsMargins(
             16,
-            14,
+            12,
             16,
-            14
+            12
         )
 
         status_layout.setSpacing(
@@ -340,13 +441,13 @@ class MainWindow(QMainWindow):
 
         network_layout.setContentsMargins(
             16,
-            11,
+            8,
             16,
-            11
+            8
         )
 
         network_layout.setSpacing(
-            8
+            5
         )
 
         self.wifi_label = self.add_info_row(
@@ -389,13 +490,13 @@ class MainWindow(QMainWindow):
 
         session_layout.setContentsMargins(
             16,
-            11,
+            8,
             16,
-            11
+            8
         )
 
         session_layout.setSpacing(
-            8
+            5
         )
 
         self.auth_label = self.add_info_row(
@@ -522,6 +623,20 @@ class MainWindow(QMainWindow):
             bottom_layout
         )
 
+    def show_settings_page(self):
+
+        self.settings_page.load_saved_config()
+
+        self.pages.setCurrentWidget(
+            self.settings_page
+        )
+
+    def show_main_page(self):
+
+        self.pages.setCurrentWidget(
+            self.main_page
+        )
+
     def add_info_row(
         self,
         layout,
@@ -530,6 +645,13 @@ class MainWindow(QMainWindow):
     ):
 
         row = QHBoxLayout()
+
+        row.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
 
         row.setSpacing(
             8

@@ -213,12 +213,16 @@ class AuthController:
                 "Internet is already working."
             )
 
-            print(
-                "Already authenticated, but no "
-                "keepalive URL is available"
-            )
+            self.state = AuthState.AUTHENTICATED
 
-            self.state = AuthState.CONNECTED
+            if self.client.keepalive_url:
+
+                self.client.start_keepalive()
+                self.keepalive_active = True
+
+            print(
+                "Already authenticated."
+            )
 
             return
 
@@ -551,11 +555,15 @@ class AuthController:
                         "Internet is already working."
                     )
 
-                    self.state = AuthState.CONNECTED
+                    self.state = AuthState.AUTHENTICATED
+
+                    if self.client.keepalive_url:
+
+                        self.client.start_keepalive()
+                        self.keepalive_active = True
 
                     print(
-                        "Already authenticated, but no "
-                        "known FortiGate session is available"
+                        "Already authenticated."
                     )
 
                 else:
