@@ -41,6 +41,10 @@ class AuthController:
 
         self.auto_login_blocked_until = 0
 
+        # Used to cancel an in-progress credential-change
+        # authentication when newer credentials are saved.
+        self.credentials_cancel_event = threading.Event()
+
     def get_status(self):
 
         cooldown_remaining = max(
@@ -235,7 +239,10 @@ class AuthController:
 
         self._authenticate_with_retry()
 
-    def _authenticate_with_retry(self):
+    def _authenticate_with_retry(
+        self,
+        cancel_event=None
+    ):
 
         max_attempts = 5
 
@@ -245,6 +252,17 @@ class AuthController:
         ):
 
             if self.stop_event.is_set():
+                return False
+
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+            ):
+
+                print(
+                    "Authentication cancelled."
+                )
+
                 return False
 
             if self.auto_login_blocked_until > time.monotonic():
@@ -274,6 +292,26 @@ class AuthController:
 
             success = self.client.login()
 
+            # The credentials may have changed while the
+            # HTTP request was in progress. Never accept
+            # the result of that old request.
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+            ):
+
+                if success:
+
+                    self.client.stop_keepalive()
+                    self.client.logout()
+
+                print(
+                    "Authentication result discarded "
+                    "because newer credentials were saved."
+                )
+
+                return False
+
             if success:
 
                 self.state = AuthState.AUTHENTICATED
@@ -294,6 +332,17 @@ class AuthController:
 
                 return True
 
+            if (
+                cancel_event is not None
+                and cancel_event.is_set()
+            ):
+
+                print(
+                    "Authentication cancelled."
+                )
+
+                return False
+
             if attempt < max_attempts:
 
                 print(
@@ -301,7 +350,18 @@ class AuthController:
                     "waiting before retry..."
                 )
 
-                if self.stop_event.wait(5):
+                if cancel_event is not None:
+
+                    if cancel_event.wait(5):
+
+                        print(
+                            "Authentication cancelled."
+                        )
+
+                        return False
+
+                elif self.stop_event.wait(5):
+
                     return False
 
         self.state = AuthState.CONNECTED
@@ -319,6 +379,135 @@ class AuthController:
         )
 
         return False
+
+    def cancel_credentials_change(self):
+
+        self.credentials_cancel_event.set()
+
+    def credentials_changed(self):
+
+        # IMPORTANT:
+        # Cancel any previous credential-change operation
+        # BEFORE trying to acquire event_lock.
+        #
+        # This allows a second Save click to signal the
+        # currently running authentication even though that
+        # authentication is still holding event_lock.
+        self.credentials_cancel_event.set()
+
+        with self.event_lock:
+
+            if self.stop_event.is_set():
+                return False, False
+
+            # This operation is now the newest credential-change
+            # operation, so create a fresh cancellation event.
+            self.credentials_cancel_event = (
+                threading.Event()
+            )
+
+            cancel_event = (
+                self.credentials_cancel_event
+            )
+
+            print(
+                "Credentials changed."
+            )
+
+            if self.state == AuthState.AUTHENTICATED:
+
+                print(
+                    "Currently authenticated — "
+                    "logging out of previous session..."
+                )
+
+                self.client.stop_keepalive()
+
+                self.keepalive_active = False
+
+                logout_success = self.client.logout()
+
+                if not logout_success:
+
+                    if cancel_event.is_set():
+
+                        print(
+                            "Credential change cancelled."
+                        )
+
+                        return False, True
+
+                    print(
+                        "Could not log out of previous session. "
+                        "Keeping current authentication state."
+                    )
+
+                    self.client.start_keepalive()
+
+                    self.keepalive_active = (
+                        self.client._keepalive_thread
+                        is not None
+                    )
+
+                    notify(
+                        "Credential change failed",
+                        "Could not log out of the previous session."
+                    )
+
+                    return False, False
+
+                print(
+                    "Previous session logged out."
+                )
+
+                self.state = AuthState.CONNECTED
+
+            elif self.state == AuthState.DISCONNECTED:
+
+                print(
+                    "Not connected to hostel Wi-Fi — "
+                    "credentials saved for next connection."
+                )
+
+                return True, False
+
+            if cancel_event.is_set():
+
+                print(
+                    "Credential change cancelled."
+                )
+
+                return False, True
+
+            print(
+                "Authenticating with new credentials..."
+            )
+
+            self.state = AuthState.AUTHENTICATING
+
+            success = self._authenticate_with_retry(
+                cancel_event
+            )
+
+            if cancel_event.is_set():
+
+                return False, True
+
+            if success:
+
+                notify(
+                    "Credentials updated",
+                    "Authenticated with the new credentials."
+                )
+
+                return True, False
+
+            notify(
+                "Authentication failed",
+                "The new credentials could not authenticate."
+            )
+
+            return False, False
 
     def _on_disconnected(self):
 
@@ -623,6 +812,8 @@ class AuthController:
         )
 
         self.stop_event.set()
+
+        self.credentials_cancel_event.set()
 
         if self.worker_thread:
 

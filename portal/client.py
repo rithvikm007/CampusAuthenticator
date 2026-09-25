@@ -2,7 +2,8 @@ import requests
 import threading
 
 from portal.parser import extract_login_data
-from config import PORTAL_URL, USERNAME, PASSWORD
+from config import PORTAL_URL
+from storage.config import load_config
 from storage.session import (
     save_session,
     load_session,
@@ -41,7 +42,6 @@ class PortalClient:
         self._stop_event = threading.Event()
         self._keepalive_thread = None
 
-
     def check_auth(self):
         """
         Checks whether normal Internet access is available.
@@ -76,7 +76,6 @@ class PortalClient:
 
         return False
 
-
     def recover_session(self):
         """
         Attempts to recover the previously known FortiGate
@@ -96,7 +95,6 @@ class PortalClient:
 
             return False
 
-
         print(
             "Attempting to recover previous FortiGate session..."
         )
@@ -114,7 +112,6 @@ class PortalClient:
                 response.status_code
             )
 
-
             # A successful keepalive request means the
             # existing session is still usable.
             if response.status_code == 200:
@@ -125,7 +122,6 @@ class PortalClient:
 
                 return True
 
-
             print(
                 "Previous FortiGate session is no longer valid"
             )
@@ -135,7 +131,6 @@ class PortalClient:
 
             return False
 
-
         except requests.RequestException as e:
 
             print(
@@ -143,9 +138,7 @@ class PortalClient:
                 repr(e)
             )
 
-
             return False
-
 
     def get_auth_page(self):
 
@@ -179,33 +172,53 @@ class PortalClient:
 
         return response
 
-
     def login(self):
 
         try:
 
-            response = self.get_auth_page()
+            config = load_config()
 
+            if not config:
+
+                print(
+                    "No saved application configuration"
+                )
+
+                return False
+
+            username = config.get(
+                "username"
+            )
+
+            password = config.get(
+                "password"
+            )
+
+            if username is None or password is None:
+
+                print(
+                    "Username or password is missing"
+                )
+
+                return False
+
+            response = self.get_auth_page()
 
             if not response:
                 return False
-
 
             login_data = extract_login_data(
                 response.text
             )
 
-
             print("\nSubmitting credentials...")
-
 
             payload = {
                 "4Tredir": login_data["redir"],
                 "magic": login_data["magic"],
-                "username": USERNAME,
-                "password": PASSWORD
+                "username": username,
+                "password": password
             }
-
 
             headers = {
                 "Content-Type":
@@ -218,7 +231,6 @@ class PortalClient:
                     response.url
             }
 
-
             response = self.session.post(
                 response.url,
                 data=payload,
@@ -227,16 +239,16 @@ class PortalClient:
                 allow_redirects=False
             )
 
-
             print(
                 "Login status:",
                 response.status_code
             )
 
-
             if response.status_code in (302, 303):
 
-                self.keepalive_url = response.headers.get("Location")
+                self.keepalive_url = response.headers.get(
+                    "Location"
+                )
 
                 if not self.keepalive_url:
 
@@ -247,13 +259,14 @@ class PortalClient:
 
                     return False
 
-                save_session(self.keepalive_url)
+                save_session(
+                    self.keepalive_url
+                )
 
                 print(
                     "Keepalive URL:",
                     self.keepalive_url
                 )
-
 
                 try:
 
@@ -273,13 +286,11 @@ class PortalClient:
                         repr(e)
                     )
 
-
                 print(
                     "Authentication successful"
                 )
 
                 return True
-
 
             print(
                 "Authentication failed"
@@ -291,7 +302,6 @@ class PortalClient:
 
             return False
 
-
         except Exception as e:
 
             print(
@@ -300,7 +310,6 @@ class PortalClient:
             )
 
             return False
-
 
     def start_keepalive(self):
         """
@@ -317,7 +326,6 @@ class PortalClient:
 
             return
 
-
         if self._keepalive_thread is not None:
 
             print(
@@ -325,7 +333,6 @@ class PortalClient:
             )
 
             return
-
 
         self._stop_event.clear()
 
@@ -340,7 +347,6 @@ class PortalClient:
             "Keepalive started"
         )
 
-
     def stop_keepalive(self):
         """
         Signals the keepalive thread to stop and
@@ -349,7 +355,6 @@ class PortalClient:
 
         if self._keepalive_thread is None:
             return
-
 
         print(
             "Stopping keepalive..."
@@ -366,7 +371,6 @@ class PortalClient:
         print(
             "Keepalive stopped"
         )
-
 
     def logout(self):
         """
@@ -386,17 +390,14 @@ class PortalClient:
 
             return False
 
-
         logout_url = self.keepalive_url.replace(
             "/keepalive?",
             "/logout?"
         )
 
-
         print(
             f"Logging out: {logout_url}"
         )
-
 
         try:
 
@@ -410,7 +411,6 @@ class PortalClient:
                 response.status_code
             )
 
-
             if response.status_code == 200:
 
                 clear_session()
@@ -418,14 +418,12 @@ class PortalClient:
 
                 return True
 
-
             print(
                 "Logout request did not return "
                 "a successful status"
             )
 
             return False
-
 
         except requests.RequestException as e:
 
@@ -435,7 +433,6 @@ class PortalClient:
             )
 
             return False
-
 
     def _keepalive_loop(self):
         """
@@ -458,7 +455,6 @@ class PortalClient:
                     return
 
                 elapsed += 30
-
 
             # Time to refresh
             try:

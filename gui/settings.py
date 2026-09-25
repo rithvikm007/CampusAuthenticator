@@ -14,7 +14,7 @@ from storage.config import load_config, save_config
 
 class SettingsPage(QWidget):
 
-    saved = Signal()
+    saved = Signal(bool)
     cancelled = Signal()
 
     def __init__(self, parent=None):
@@ -221,13 +221,48 @@ class SettingsPage(QWidget):
 
     def save_settings(self):
 
-        save_config(
-            self.ssid_input.text().strip(),
-            self.username_input.text().strip(),
+        old_config = load_config()
+
+        old_username = (
+            old_config.get(
+                "username",
+                ""
+            )
+            if old_config
+            else ""
+        )
+
+        old_password = (
+            old_config.get(
+                "password",
+                ""
+            )
+            if old_config
+            else ""
+        )
+
+        new_username = (
+            self.username_input.text().strip()
+        )
+
+        new_password = (
             self.password_input.text()
         )
 
-        self.saved.emit()
+        credentials_changed = (
+            old_username != new_username
+            or old_password != new_password
+        )
+
+        save_config(
+            self.ssid_input.text().strip(),
+            new_username,
+            new_password
+        )
+
+        self.saved.emit(
+            credentials_changed
+        )
 
     def apply_styles(self):
 

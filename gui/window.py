@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,6 +19,28 @@ from core.controller import AuthController, AuthState
 from gui.settings import SettingsPage
 
 
+class CredentialsChangeWorker(QObject):
+
+    finished = Signal(bool, bool)
+
+    def __init__(self, controller: AuthController):
+
+        super().__init__()
+
+        self.controller = controller
+
+    def run(self):
+
+        success, cancelled = (
+            self.controller.credentials_changed()
+        )
+
+        self.finished.emit(
+            success,
+            cancelled
+        )
+
+
 class MainWindow(QMainWindow):
 
     def __init__(
@@ -29,6 +51,10 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.controller = controller
+
+        self.credentials_thread = None
+        self.credentials_worker = None
+        self.credentials_restart_pending = False
 
         icon_path = (
             Path(__file__).resolve().parent.parent
@@ -52,17 +78,13 @@ class MainWindow(QMainWindow):
         self.setup_ui()
         self.apply_styles()
 
-        self.refresh_timer = QTimer(
-            self
-        )
+        self.refresh_timer = QTimer(self)
 
         self.refresh_timer.timeout.connect(
             self.update_status
         )
 
-        self.refresh_timer.start(
-            1000
-        )
+        self.refresh_timer.start(1000)
 
         self.update_status()
 
@@ -241,7 +263,7 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage()
 
         self.settings_page.saved.connect(
-            self.show_main_page
+            self.settings_saved
         )
 
         self.settings_page.cancelled.connect(
@@ -637,6 +659,121 @@ class MainWindow(QMainWindow):
             self.main_page
         )
 
+    def settings_saved(
+        self,
+        credentials_changed
+    ):
+
+        if not credentials_changed:
+
+            self.show_main_page()
+
+            self.update_status()
+
+            return
+
+        # A credential-change authentication is already running.
+        # Cancel it and remember that the latest saved credentials
+        # need to be authenticated once the old operation exits.
+        if (
+            self.credentials_thread is not None
+            and self.credentials_thread.isRunning()
+        ):
+
+            print(
+                "Credential change already in progress — "
+                "restarting with latest credentials."
+            )
+
+            self.credentials_restart_pending = True
+
+            self.controller.cancel_credentials_change()
+
+            self.show_main_page()
+
+            return
+
+        self.credentials_restart_pending = False
+
+        self.show_main_page()
+
+        self.start_credentials_change()
+
+    def start_credentials_change(self):
+
+        self.credentials_thread = QThread(
+            self
+        )
+
+        self.credentials_worker = (
+            CredentialsChangeWorker(
+                self.controller
+            )
+        )
+
+        self.credentials_worker.moveToThread(
+            self.credentials_thread
+        )
+
+        self.credentials_thread.started.connect(
+            self.credentials_worker.run
+        )
+
+        self.credentials_worker.finished.connect(
+            self.credentials_change_finished
+        )
+
+        self.credentials_worker.finished.connect(
+            self.credentials_thread.quit
+        )
+
+        self.credentials_worker.finished.connect(
+            self.credentials_worker.deleteLater
+        )
+
+        self.credentials_thread.finished.connect(
+            self.credentials_thread.deleteLater
+        )
+
+        self.credentials_thread.start()
+
+        self.update_status()
+
+    def credentials_change_finished(
+        self,
+        success,
+        cancelled
+    ):
+
+        self.update_status()
+
+        # If the user saved newer credentials while this
+        # operation was running, immediately start a fresh
+        # authentication using those latest credentials.
+        if cancelled:
+
+            if self.credentials_restart_pending:
+
+                self.credentials_restart_pending = False
+
+                self.credentials_worker = None
+                self.credentials_thread = None
+
+                self.start_credentials_change()
+
+            return
+
+        self.credentials_worker = None
+        self.credentials_thread = None
+
+        if not success:
+
+            QMessageBox.warning(
+                self,
+                "Credentials",
+                "Could not authenticate with the new credentials."
+            )
+
     def add_info_row(
         self,
         layout,
@@ -735,7 +872,10 @@ class MainWindow(QMainWindow):
 
         QApplication.quit()
 
-    def closeEvent(self, event):
+    def closeEvent(
+        self,
+        event
+    ):
 
         self.hide()
 
