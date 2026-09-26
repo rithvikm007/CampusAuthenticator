@@ -1,5 +1,6 @@
 import requests
 import threading
+from enum import Enum
 
 from portal.parser import extract_login_data
 from config import PORTAL_URL
@@ -15,6 +16,13 @@ from storage.session import (
 # Portal timeout is 6400s; we refresh at 6000s
 # for a 400-second safety margin.
 KEEPALIVE_INTERVAL = 6000
+
+
+class NetworkStatus(Enum):
+
+    CAPTIVE_PORTAL = "CaptivePortal"
+    INTERNET_AVAILABLE = "InternetAvailable"
+    NO_INTERNET = "NoInternet"
 
 
 class PortalClient:
@@ -42,7 +50,75 @@ class PortalClient:
         self._stop_event = threading.Event()
         self._keepalive_thread = None
 
+    def detect_network(self):
+
+        print(
+            "Checking network type..."
+        )
+
+        try:
+
+            response = self.session.get(
+                "http://connectivitycheck.gstatic.com/generate_204",
+                timeout=5,
+                allow_redirects=False
+            )
+
+            print(
+                "Network probe status:",
+                response.status_code
+            )
+
+            print(
+                "Network probe location:",
+                response.headers.get("Location")
+            )
+
+            location = response.headers.get(
+                "Location",
+                ""
+            )
+
+            if (
+                300 <= response.status_code < 400
+                and "fgtauth" in location
+            ):
+
+                print(
+                    "FortiGate captive portal detected"
+                )
+
+                return NetworkStatus.CAPTIVE_PORTAL
+
+            if response.status_code in (
+                200,
+                204
+            ):
+
+                print(
+                    "Normal Internet access detected"
+                )
+
+                return NetworkStatus.INTERNET_AVAILABLE
+
+            print(
+                "Network probe returned an unexpected "
+                "response"
+            )
+
+            return NetworkStatus.NO_INTERNET
+
+        except requests.RequestException as e:
+
+            print(
+                "Network probe failed:",
+                repr(e)
+            )
+
+            return NetworkStatus.NO_INTERNET
+
     def check_auth(self):
+
         """
         Checks whether normal Internet access is available.
 
@@ -52,7 +128,6 @@ class PortalClient:
 
         urls = [
             "http://connectivitycheck.gstatic.com/generate_204",
-            "http://neverssl.com",
         ]
 
         for url in urls:
@@ -68,15 +143,21 @@ class PortalClient:
                 if "fgtauth" in response.url:
                     continue
 
-                if response.status_code in (200, 204):
+                if response.status_code in (
+                    200,
+                    204
+                ):
+
                     return True
 
             except requests.RequestException:
+
                 continue
 
         return False
 
     def recover_session(self):
+
         """
         Attempts to recover the previously known FortiGate
         authentication session using the existing keepalive URL.
@@ -112,8 +193,6 @@ class PortalClient:
                 response.status_code
             )
 
-            # A successful keepalive request means the
-            # existing session is still usable.
             if response.status_code == 200:
 
                 print(
@@ -142,16 +221,23 @@ class PortalClient:
 
     def get_auth_page(self):
 
-        print("Triggering captive portal...")
+        print(
+            "Triggering captive portal..."
+        )
 
         response = self.session.get(
-            "http://neverssl.com",
+            "http://connectivitycheck.gstatic.com/generate_204",
             timeout=5,
             allow_redirects=True
         )
 
-        print("\nCurrent URL:")
-        print(response.url)
+        print(
+            "\nCurrent URL:"
+        )
+
+        print(
+            response.url
+        )
 
         print(
             "Status:",
@@ -211,7 +297,9 @@ class PortalClient:
                 response.text
             )
 
-            print("\nSubmitting credentials...")
+            print(
+                "\nSubmitting credentials..."
+            )
 
             payload = {
                 "4Tredir": login_data["redir"],
@@ -244,7 +332,10 @@ class PortalClient:
                 response.status_code
             )
 
-            if response.status_code in (302, 303):
+            if response.status_code in (
+                302,
+                303
+            ):
 
                 self.keepalive_url = response.headers.get(
                     "Location"
@@ -312,6 +403,7 @@ class PortalClient:
             return False
 
     def start_keepalive(self):
+
         """
         Starts a background thread that periodically
         refreshes the keepalive URL to maintain the
@@ -348,6 +440,7 @@ class PortalClient:
         )
 
     def stop_keepalive(self):
+
         """
         Signals the keepalive thread to stop and
         waits for it to exit.
@@ -373,6 +466,7 @@ class PortalClient:
         )
 
     def logout(self):
+
         """
         Attempts to send a logout request to the firewall
         using the same token from the keepalive URL.
@@ -435,6 +529,7 @@ class PortalClient:
             return False
 
     def _keepalive_loop(self):
+
         """
         Internal loop that runs in the background thread.
         Sleeps in 30-second chunks so stop_keepalive()
@@ -443,8 +538,6 @@ class PortalClient:
 
         while not self._stop_event.is_set():
 
-            # Wait for the refresh interval,
-            # checking the stop flag every 30 seconds.
             elapsed = 0
 
             while elapsed < KEEPALIVE_INTERVAL:
@@ -456,7 +549,6 @@ class PortalClient:
 
                 elapsed += 30
 
-            # Time to refresh
             try:
 
                 print(
@@ -506,9 +598,6 @@ if __name__ == "__main__":
 
         try:
 
-            # Block main thread until interrupted.
-            # Use short timeouts so Ctrl+C works
-            # on Windows.
             while not client._stop_event.is_set():
 
                 client._stop_event.wait(

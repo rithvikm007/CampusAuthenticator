@@ -3,12 +3,11 @@ import time
 from enum import Enum
 
 from network.events import watch_network_events
-from network.wifi import (
-    get_current_ssid,
-    is_hostel_wifi
-)
 from notifications import notify
-from portal.client import PortalClient
+from portal.client import (
+    NetworkStatus,
+    PortalClient
+)
 
 
 AUTO_LOGIN_COOLDOWN = 5 * 60
@@ -94,25 +93,105 @@ class AuthController:
         if self.stop_event.is_set():
             return
 
-        self.ssid = get_current_ssid()
+        print(
+            "Network connection detected."
+        )
 
-        if not is_hostel_wifi():
+        network_status = self.client.detect_network()
 
-            self.wifi_connected = False
-            self.ssid = None
+        # --------------------------------------------------------------
+        # Normal Internet
+        # --------------------------------------------------------------
+
+        if network_status == NetworkStatus.INTERNET_AVAILABLE:
 
             print(
-                "Not hostel WiFi — ignoring"
+                "Internet is available."
             )
+
+            # A successful connectivity probe does not necessarily
+            # mean this is a non-campus network. If we have a
+            # previously saved FortiGate session, try recovering it.
+            if self.client.keepalive_url:
+
+                print(
+                    "Previous session found — "
+                    "attempting session recovery..."
+                )
+
+                if self.client.recover_session():
+
+                    self.wifi_connected = True
+                    self.state = AuthState.AUTHENTICATED
+
+                    if not self.keepalive_active:
+
+                        self.client.start_keepalive()
+
+                        self.keepalive_active = True
+
+                    print(
+                        "Previous session recovered — "
+                        "campus network detected."
+                    )
+
+                    return
+
+                print(
+                    "Previous session could not be recovered — "
+                    "treating network as normal Internet."
+                )
+
+                # A Disconnected event may not always be delivered
+                # before a new Connected event. Make sure an old
+                # keepalive is not left running in that case.
+                self.client.stop_keepalive()
+                self.keepalive_active = False
+
+            self.wifi_connected = False
+
+            if self.state == AuthState.AUTHENTICATING:
+
+                print(
+                    "Network is already online. "
+                    "Stopping authentication."
+                )
+
+                self.client.stop_keepalive()
+                self.keepalive_active = False
+
+            self.state = AuthState.CONNECTED
 
             return
 
-        self.wifi_connected = True
+        # --------------------------------------------------------------
+        # No Internet
+        # --------------------------------------------------------------
+
+        if network_status == NetworkStatus.NO_INTERNET:
+
+            print(
+                "No usable Internet connection detected — "
+                "ignoring network event."
+            )
+
+            self.wifi_connected = False
+
+            return
+
+        # --------------------------------------------------------------
+        # Captive portal / campus network
+        # --------------------------------------------------------------
 
         print(
-            "Connected to:",
-            self.ssid
+            "NITC captive portal detected."
         )
+
+        self.wifi_connected = True
+
+        # --------------------------------------------------------------
+        # Already authenticated
+        # --------------------------------------------------------------
 
         if self.state == AuthState.AUTHENTICATED:
 
@@ -140,6 +219,10 @@ class AuthController:
             self.state = AuthState.DISCONNECTED
             self.keepalive_active = False
 
+        # --------------------------------------------------------------
+        # Authentication already running
+        # --------------------------------------------------------------
+
         if self.state == AuthState.AUTHENTICATING:
 
             print(
@@ -148,6 +231,10 @@ class AuthController:
             )
 
             return
+
+        # --------------------------------------------------------------
+        # Manual logout cooldown
+        # --------------------------------------------------------------
 
         if self.auto_login_blocked_until > time.monotonic():
 
@@ -165,6 +252,10 @@ class AuthController:
 
             return
 
+        # --------------------------------------------------------------
+        # Let the network settle
+        # --------------------------------------------------------------
+
         print(
             "Waiting for network to stabilize..."
         )
@@ -172,12 +263,36 @@ class AuthController:
         if self.stop_event.wait(5):
             return
 
-        self.ssid = get_current_ssid()
+        # The network may have changed during the delay.
+        network_status = self.client.detect_network()
 
-        if not is_hostel_wifi():
+        if network_status != NetworkStatus.CAPTIVE_PORTAL:
 
-            self._on_disconnected()
+            if network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                print(
+                    "Internet became available while "
+                    "network was stabilizing."
+                )
+
+            else:
+
+                print(
+                    "Captive portal is no longer reachable."
+                )
+
+            self.wifi_connected = False
+
+            if network_status == NetworkStatus.NO_INTERNET:
+                self.state = AuthState.DISCONNECTED
+            else:
+                self.state = AuthState.CONNECTED
+
             return
+
+        # --------------------------------------------------------------
+        # Cooldown may have started while network stabilized
+        # --------------------------------------------------------------
 
         if self.auto_login_blocked_until > time.monotonic():
 
@@ -190,15 +305,21 @@ class AuthController:
 
             return
 
+        # --------------------------------------------------------------
+        # Try recovering an existing campus session
+        # --------------------------------------------------------------
+
         if self.client.keepalive_url:
 
             if self.client.recover_session():
 
                 self.state = AuthState.AUTHENTICATED
 
-                self.client.start_keepalive()
+                if not self.keepalive_active:
 
-                self.keepalive_active = True
+                    self.client.start_keepalive()
+
+                    self.keepalive_active = True
 
                 print(
                     "Previous session recovered — "
@@ -207,8 +328,12 @@ class AuthController:
 
                 return
 
+        # --------------------------------------------------------------
+        # Check whether authentication is already valid
+        # --------------------------------------------------------------
+
         print(
-            "Checking network connectivity..."
+            "Checking existing authentication..."
         )
 
         if self.client.check_auth():
@@ -222,6 +347,7 @@ class AuthController:
             if self.client.keepalive_url:
 
                 self.client.start_keepalive()
+
                 self.keepalive_active = True
 
             print(
@@ -230,10 +356,14 @@ class AuthController:
 
             return
 
+        # --------------------------------------------------------------
+        # Authenticate
+        # --------------------------------------------------------------
+
         self.state = AuthState.AUTHENTICATING
 
         print(
-            "Hostel WiFi detected — "
+            "Campus captive portal detected — "
             "authenticating..."
         )
 
@@ -275,13 +405,30 @@ class AuthController:
 
                 return False
 
-            self.ssid = get_current_ssid()
+            # Re-check the network before every attempt.
+            network_status = self.client.detect_network()
 
-            if not is_hostel_wifi():
+            if network_status != NetworkStatus.CAPTIVE_PORTAL:
 
-                self.state = AuthState.DISCONNECTED
                 self.wifi_connected = False
-                self.ssid = None
+
+                if network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                    print(
+                        "Internet is already available — "
+                        "stopping authentication."
+                    )
+
+                    self.state = AuthState.CONNECTED
+
+                else:
+
+                    print(
+                        "Captive portal unavailable — "
+                        "stopping authentication."
+                    )
+
+                    self.state = AuthState.DISCONNECTED
 
                 return False
 
@@ -292,7 +439,7 @@ class AuthController:
 
             success = self.client.login()
 
-            # The credentials may have changed while the
+            # Credentials may have changed while the
             # HTTP request was in progress. Never accept
             # the result of that old request.
             if (
@@ -303,6 +450,8 @@ class AuthController:
                 if success:
 
                     self.client.stop_keepalive()
+                    self.keepalive_active = False
+
                     self.client.logout()
 
                 print(
@@ -315,6 +464,7 @@ class AuthController:
             if success:
 
                 self.state = AuthState.AUTHENTICATED
+                self.wifi_connected = True
 
                 self.client.start_keepalive()
 
@@ -386,13 +536,8 @@ class AuthController:
 
     def credentials_changed(self):
 
-        # IMPORTANT:
         # Cancel any previous credential-change operation
-        # BEFORE trying to acquire event_lock.
-        #
-        # This allows a second Save click to signal the
-        # currently running authentication even though that
-        # authentication is still holding event_lock.
+        # before trying to acquire event_lock.
         self.credentials_cancel_event.set()
 
         with self.event_lock:
@@ -400,8 +545,6 @@ class AuthController:
             if self.stop_event.is_set():
                 return False, False
 
-            # This operation is now the newest credential-change
-            # operation, so create a fresh cancellation event.
             self.credentials_cancel_event = (
                 threading.Event()
             )
@@ -413,6 +556,10 @@ class AuthController:
             print(
                 "Credentials changed."
             )
+
+            # ----------------------------------------------------------
+            # If currently authenticated, invalidate the old session.
+            # ----------------------------------------------------------
 
             if self.state == AuthState.AUTHENTICATED:
 
@@ -462,14 +609,41 @@ class AuthController:
 
                 self.state = AuthState.CONNECTED
 
-            elif self.state == AuthState.DISCONNECTED:
+            # ----------------------------------------------------------
+            # Determine what network we are currently on.
+            # ----------------------------------------------------------
+
+            network_status = self.client.detect_network()
+
+            if network_status == NetworkStatus.NO_INTERNET:
+
+                self.wifi_connected = False
+                self.state = AuthState.DISCONNECTED
 
                 print(
-                    "Not connected to hostel Wi-Fi — "
+                    "No usable Internet connection detected — "
                     "credentials saved for next connection."
                 )
 
                 return True, False
+
+            if network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                self.wifi_connected = False
+                self.state = AuthState.CONNECTED
+
+                print(
+                    "Normal Internet detected — "
+                    "credentials saved for next campus connection."
+                )
+
+                return True, False
+
+            # ----------------------------------------------------------
+            # Campus captive portal detected.
+            # ----------------------------------------------------------
+
+            self.wifi_connected = True
 
             if cancel_event.is_set():
 
@@ -517,7 +691,7 @@ class AuthController:
         if self.state == AuthState.AUTHENTICATED:
 
             print(
-                "WiFi disconnected — "
+                "Network disconnected — "
                 "stopping keepalive and logging out..."
             )
 
@@ -531,7 +705,7 @@ class AuthController:
 
                 notify(
                     "Logged out",
-                    "Wi-Fi disconnected. "
+                    "Network disconnected. "
                     "CampusAuthenticator logged out."
                 )
 
@@ -539,14 +713,14 @@ class AuthController:
 
                 notify(
                     "Logout unavailable",
-                    "Wi-Fi disconnected before "
+                    "Network disconnected before "
                     "CampusAuthenticator could reach FortiGate."
                 )
 
         elif self.state == AuthState.AUTHENTICATING:
 
             print(
-                "WiFi disconnected during authentication"
+                "Network disconnected during authentication"
             )
 
             self.client.stop_keepalive()
@@ -555,7 +729,7 @@ class AuthController:
         self.state = AuthState.DISCONNECTED
 
         print(
-            "WiFi disconnected — "
+            "Network disconnected — "
             "ready to reconnect"
         )
 
@@ -576,16 +750,24 @@ class AuthController:
 
             self.auto_login_blocked_until = 0
 
-            self.ssid = get_current_ssid()
+            network_status = self.client.detect_network()
 
-            if not is_hostel_wifi():
+            if network_status != NetworkStatus.CAPTIVE_PORTAL:
 
                 self.wifi_connected = False
-                self.ssid = None
 
-                print(
-                    "Not connected to hostel WiFi"
-                )
+                if network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                    print(
+                        "Internet is already available — "
+                        "no campus captive portal detected."
+                    )
+
+                else:
+
+                    print(
+                        "No campus captive portal detected."
+                    )
 
                 return False
 
@@ -643,19 +825,24 @@ class AuthController:
                 + AUTO_LOGIN_COOLDOWN
             )
 
-            self.wifi_connected = is_hostel_wifi()
+            network_status = self.client.detect_network()
 
-            self.ssid = (
-                get_current_ssid()
-                if self.wifi_connected
-                else None
-            )
+            if network_status == NetworkStatus.CAPTIVE_PORTAL:
 
-            self.state = (
-                AuthState.CONNECTED
-                if self.wifi_connected
-                else AuthState.DISCONNECTED
-            )
+                self.wifi_connected = True
+                self.state = AuthState.CONNECTED
+
+            elif network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                self.wifi_connected = False
+                self.state = AuthState.CONNECTED
+
+            else:
+
+                self.wifi_connected = False
+                self.state = AuthState.DISCONNECTED
+
+            self.ssid = None
 
             print(
                 "Manual logout successful"
@@ -690,19 +877,18 @@ class AuthController:
             "Checking initial network state..."
         )
 
-        self.ssid = get_current_ssid()
+        network_status = self.client.detect_network()
 
-        if is_hostel_wifi():
+        # --------------------------------------------------------------
+        # Campus captive portal
+        # --------------------------------------------------------------
+
+        if network_status == NetworkStatus.CAPTIVE_PORTAL:
 
             self.wifi_connected = True
 
             print(
-                "Already connected to hostel WiFi"
-            )
-
-            print(
-                "SSID:",
-                self.ssid
+                "Campus captive portal detected."
             )
 
             if self.client.keepalive_url:
@@ -716,9 +902,11 @@ class AuthController:
 
                     self.state = AuthState.AUTHENTICATED
 
-                    self.client.start_keepalive()
+                    if not self.keepalive_active:
 
-                    self.keepalive_active = True
+                        self.client.start_keepalive()
+
+                        self.keepalive_active = True
 
                     print(
                         "Previous session recovered — "
@@ -764,13 +952,75 @@ class AuthController:
 
                     self._authenticate_with_retry()
 
+        # --------------------------------------------------------------
+        # Normal Internet
+        # --------------------------------------------------------------
+
+        elif network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+            print(
+                "Internet is available."
+            )
+
+            if self.client.keepalive_url:
+
+                print(
+                    "Previous session found — "
+                    "attempting session recovery..."
+                )
+
+                if self.client.recover_session():
+
+                    self.wifi_connected = True
+                    self.state = AuthState.AUTHENTICATED
+
+                    if not self.keepalive_active:
+
+                        self.client.start_keepalive()
+
+                        self.keepalive_active = True
+
+                    print(
+                        "Previous session recovered — "
+                        "campus network detected."
+                    )
+
+                else:
+
+                    print(
+                        "Previous session could not be recovered — "
+                        "treating network as normal Internet."
+                    )
+
+                    # Do not leave a stale keepalive running.
+                    self.client.stop_keepalive()
+                    self.keepalive_active = False
+
+                    self.wifi_connected = False
+                    self.state = AuthState.CONNECTED
+
+            else:
+
+                self.wifi_connected = False
+                self.state = AuthState.CONNECTED
+
+            if self.state == AuthState.CONNECTED:
+
+                print(
+                    "No campus captive portal detected."
+                )
+
+        # --------------------------------------------------------------
+        # No Internet
+        # --------------------------------------------------------------
+
         else:
 
             self.wifi_connected = False
-            self.ssid = None
+            self.state = AuthState.DISCONNECTED
 
             print(
-                "Not connected to hostel WiFi"
+                "No usable Internet connection detected."
             )
 
         try:

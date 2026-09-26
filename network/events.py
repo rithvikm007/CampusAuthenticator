@@ -91,13 +91,24 @@ def watch_network_events(
         if not event.Name:
             continue
 
-        if "Wi-Fi" not in event.Name:
-            continue
+        # Ignore virtual adapters such as VPN,
+        # Hyper-V, VirtualBox, etc.
+        if hasattr(event, "PhysicalAdapter"):
+
+            if not event.PhysicalAdapter:
+                continue
 
         status = states.get(
             event.NetConnectionStatus,
             "Unknown"
         )
+
+        if status not in (
+            "Connected",
+            "Disconnected"
+        ):
+
+            continue
 
         callback(status)
 
