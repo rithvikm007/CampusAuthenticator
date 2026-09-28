@@ -1,34 +1,328 @@
 # CampusAuthenticator
 
-An automated, event-driven Windows background application that handles FortiGate captive portal authentication for the NIT Calicut (NITC) campus Wi-Fi network.
+CampusAuthenticator is a Windows desktop application that automatically authenticates a device to the NIT Calicut campus network through its FortiGate captive portal.
 
-Instead of continuously polling the network, CampusAuthenticator listens for native Windows WMI network events. When it detects a connection to the configured campus Wi-Fi, it automatically authenticates when necessary and maintains the FortiGate authentication session using the required keepalive mechanism.
+It runs as a system-tray application, monitors network connectivity, detects the campus captive portal, authenticates using saved credentials, and maintains the authenticated session automatically.
 
-CampusAuthenticator also persists the FortiGate session information locally, allowing it to attempt to recover an existing authentication session after the application is restarted or the system reconnects to the network.
+---
 
 ## Features
 
-* **Event-Driven**: Uses WMI to detect Wi-Fi connections and disconnections without an infinite polling loop.
+* **Automatic campus network detection**
 
-* **Automatic Authentication**: Detects the NITC captive portal and submits the configured credentials automatically.
+  * Detects the active physical network interface.
+  * Supports both Wi-Fi and Ethernet connections.
+  * Ignores virtual, VPN, and other non-physical network adapters.
 
-* **Session Persistence & Recovery**: Persists the FortiGate keepalive URL locally and attempts to recover the existing authentication session when the application restarts or reconnects.
+* **Automatic captive portal authentication**
 
-* **Background Keepalive**: Automatically sends the firewall's keepalive request to maintain the authentication session.
+  * Detects when the campus network is behind the FortiGate captive portal.
+  * Discovers the portal endpoint dynamically from the captive-portal redirect.
+  * Authenticates using the credentials configured in the application.
 
-* **Sleep & Hibernate Resilient**: Detects changes to the authentication state after waking from Sleep/Hibernate and attempts session recovery or re-authentication when necessary.
+* **Session recovery**
 
-* **Configurable**: Wi-Fi SSID, portal IP, portal port, and credentials are loaded from environment variables.
+  * Persists the portal keepalive URL locally.
+  * Attempts to recover an existing authenticated session when possible.
 
-* **Secure Credentials**: Credentials are stored in a local `.env` file rather than being hardcoded in the source code.
+* **Automatic keepalive**
 
-* **Desktop Notifications**: Displays Windows notifications for important authentication and logout events.
+  * Periodically refreshes the authenticated session.
+  * Keeps the campus connection alive without requiring manual interaction.
 
-* **Daily Log Rotation**: Creates a separate log file for each day.
+* **GUI and system tray**
 
-* **Automatic Log Cleanup**: Logs older than three days are automatically deleted.
+  * Displays the current authentication and network state.
+  * Provides login, logout, refresh, settings, and exit controls.
+  * Continues running in the system tray.
 
-* **Zero-Friction**: Can run silently in the background through Windows Task Scheduler.
+* **Credential management**
+
+  * Campus credentials can be configured through the Settings page.
+  * Changing credentials while authenticated automatically handles the existing session and authenticates using the new credentials.
+
+* **Windows notifications**
+
+  * Authentication and connection events can be surfaced through Windows toast notifications.
+
+* **Logging**
+
+  * Application activity is written to dated log files.
+  * Old logs are automatically cleaned up.
+
+---
+
+## How It Works
+
+The application continuously monitors the system's network state and coordinates the authentication process through the following general flow:
+
+```text
+Network connection
+       │
+       ▼
+Detect active physical interface
+       │
+       ▼
+Check campus network connectivity
+       │
+       ├── Internet available
+       │
+       ├── No network
+       │
+       └── Captive portal detected
+                    │
+                    ▼
+             Discover portal
+                    │
+                    ▼
+             Authenticate
+                    │
+                    ▼
+          Save session information
+                    │
+                    ▼
+             Start keepalive
+```
+
+The application maintains four main authentication states:
+
+```text
+DISCONNECTED
+CONNECTED
+AUTHENTICATING
+AUTHENTICATED
+```
+
+These states are exposed to the GUI and used to control the application's behavior.
+
+---
+
+## Network Detection
+
+CampusAuthenticator does not require the user to configure a Wi-Fi SSID.
+
+Instead, it determines the active physical network interface using Windows network information.
+
+The application:
+
+1. Examines the system's IPv4 routing table.
+2. Finds the active default route.
+3. Resolves the corresponding network adapter.
+4. Checks whether the adapter is connected.
+5. Filters out virtual, VPN, Bluetooth, and other non-physical adapters.
+6. Determines whether the active connection is Wi-Fi or Ethernet.
+
+For example:
+
+```text
+Default route
+     │
+     ▼
+Interface index
+     │
+     ▼
+Windows network adapter
+     │
+     ▼
+Wi-Fi / Ethernet
+```
+
+This allows the application to work regardless of whether the computer is connected through Wi-Fi or Ethernet.
+
+---
+
+## Captive Portal Detection
+
+The application does not rely on a hard-coded portal IP address or port.
+
+When network connectivity is detected, CampusAuthenticator sends a request to a connectivity-check endpoint.
+
+Depending on the response, the network is classified as:
+
+```text
+CAPTIVE_PORTAL
+INTERNET_AVAILABLE
+NO_INTERNET
+```
+
+When a captive portal is detected, the HTTP redirect is followed to obtain the actual FortiGate authentication page.
+
+The portal URL is therefore discovered dynamically from the current network instead of being stored in configuration.
+
+---
+
+## Authentication
+
+After obtaining the FortiGate authentication page, the application extracts the required login parameters from the page and submits the saved campus credentials.
+
+The authentication flow is approximately:
+
+```text
+Connectivity check
+       │
+       ▼
+FortiGate redirect
+       │
+       ▼
+Retrieve login page
+       │
+       ▼
+Parse authentication parameters
+       │
+       ▼
+Load saved credentials
+       │
+       ▼
+Submit login request
+       │
+       ▼
+Receive successful redirect
+       │
+       ▼
+Save keepalive URL
+       │
+       ▼
+Start keepalive
+```
+
+The portal-specific HTML parsing is isolated in `portal/parser.py`, while HTTP communication and session management are handled by `portal/client.py`.
+
+---
+
+## Session Persistence
+
+CampusAuthenticator stores the portal session information required for recovery in:
+
+```text
+storage/session.json
+```
+
+When possible, the application can use the saved keepalive URL to recover an existing authenticated session rather than performing a completely new login.
+
+The saved session is also used by the keepalive mechanism.
+
+---
+
+## Keepalive
+
+After successful authentication, CampusAuthenticator periodically sends requests to the portal's keepalive endpoint.
+
+The keepalive interval is currently:
+
+```text
+6000 seconds
+```
+
+The keepalive process runs independently so that the main application remains responsive.
+
+The controller also handles stopping the keepalive thread when the user logs out or when the network state changes.
+
+---
+
+## Credential Management
+
+Credentials are configured through the application's **Settings** page.
+
+They are stored locally in:
+
+```text
+storage/config.json
+```
+
+The configuration contains:
+
+```json
+{
+    "username": "...",
+    "password": "..."
+}
+```
+
+The SSID is not stored as part of the application configuration.
+
+### Changing credentials while authenticated
+
+If the credentials are changed while the application is already authenticated, CampusAuthenticator handles the transition automatically:
+
+```text
+Save new credentials
+       │
+       ▼
+Cancel previous credential operation
+       │
+       ▼
+Logout existing session
+       │
+       ▼
+Authenticate using new credentials
+       │
+       ▼
+Start new keepalive
+```
+
+If multiple credential changes occur while an authentication attempt is in progress, older authentication operations are cancelled so that the latest saved credentials take precedence.
+
+---
+
+## User Interface
+
+The application runs as a Windows system-tray application.
+
+The main window provides information such as:
+
+* Authentication status
+* Active network interface
+* Login/logout state
+* Current connection state
+
+The tray interface provides quick access to the application controls.
+
+### Settings
+
+The Settings page allows the user to configure:
+
+* Campus username
+* Campus password
+
+Network interface and captive portal information are detected automatically and are not manually configured.
+
+---
+
+## Notifications
+
+The application contains a small notification layer that queues application events.
+
+On Windows, the application can display these events using Windows toast notifications.
+
+Notifications are generated by the authentication controller and consumed by the tray application.
+
+---
+
+## Logging
+
+Application activity is stored in the `logs/` directory using dated log files.
+
+Example:
+
+```text
+logs/
+├── authenticator-2026-09-26.log
+├── authenticator-2026-09-27.log
+├── authenticator-2026-09-28.log
+└── authenticator-2026-09-29.log
+```
+
+Logs are useful for diagnosing:
+
+* Network detection
+* Authentication attempts
+* Captive portal detection
+* Session recovery
+* Logout
+* Keepalive activity
+* Network disconnections
+
+Older log files are automatically removed according to the application's log-retention policy.
 
 ---
 
@@ -37,479 +331,289 @@ CampusAuthenticator also persists the FortiGate session information locally, all
 ```text
 CampusAuthenticator/
 │
-├── main.py
+├── app.py
 ├── notifications.py
-├── start.bat
-├── stop.bat
-├── run_hidden.vbs
-├── config.py
-├── .env
-├── .gitignore
+├── README.md
+│
+├── assets/
+│   ├── icon-master.png
+│   ├── icon.png
+│   └── icon.ico
+│
+├── core/
+│   ├── controller.py
+│   ├── logger.py
+│   └── __init__.py
+│
+├── gui/
+│   ├── settings.py
+│   ├── tray.py
+│   ├── window.py
+│   └── __init__.py
 │
 ├── network/
-│   ├── __init__.py
-│   ├── wifi.py
-│   └── events.py
+│   ├── events.py
+│   └── __init__.py
 │
 ├── portal/
-│   ├── __init__.py
 │   ├── client.py
-│   └── parser.py
+│   ├── parser.py
+│   └── __init__.py
 │
-├── storage/
-│   ├── __init__.py
-│   └── session.py
-│
-└── logs/
-    └── authenticator-YYYY-MM-DD.log
+└── storage/
+    ├── config.json
+    ├── config.py
+    ├── session.json
+    ├── session.py
+    └── __init__.py
 ```
 
-The following files are generated or contain sensitive information and should not be committed to the repository:
+### Module responsibilities
 
-```text
-.env
-storage/session.json
-logs/
-```
+| Module               | Responsibility                                                            |
+| -------------------- | ------------------------------------------------------------------------- |
+| `app.py`             | Application entry point and GUI/tray startup                              |
+| `notifications.py`   | Notification queue and Windows toast integration                          |
+| `core/controller.py` | Central authentication and network state controller                       |
+| `core/logger.py`     | Application logging                                                       |
+| `gui/window.py`      | Main application window                                                   |
+| `gui/settings.py`    | Credential settings interface                                             |
+| `gui/tray.py`        | System-tray application and controls                                      |
+| `network/events.py`  | Windows network events and active-interface detection                     |
+| `portal/client.py`   | Captive portal detection, authentication, session handling, and keepalive |
+| `portal/parser.py`   | Parsing of FortiGate login-page parameters                                |
+| `storage/config.py`  | Local credential configuration storage                                    |
+| `storage/session.py` | Local session persistence                                                 |
 
 ---
 
-## Setup Instructions
+## Requirements
 
-### 1. Requirements
+CampusAuthenticator currently targets:
 
 * **Windows**
 * **Python 3.12+**
-* An active NITC campus Wi-Fi connection
+* A network connection capable of reaching the NIT Calicut campus network
 
-Install the required Python packages:
+### Runtime Python dependencies
 
-```cmd
-pip install pywin32 wmi requests beautifulsoup4 python-dotenv windows-toasts
+The application uses:
+
+```text
+PySide6
+WMI
+requests
+beautifulsoup4
+Windows-Toasts
 ```
+
+These provide:
+
+* `PySide6` — GUI and system-tray interface
+* `WMI` — Windows network adapter and routing information
+* `requests` — HTTP communication with the captive portal
+* `beautifulsoup4` — parsing the portal login page
+* `Windows-Toasts` — Windows toast notifications
 
 ---
 
-### 2. Configuration
+## Installation
 
-Configuration is loaded from a `.env` file in the root directory.
+Clone or copy the project to the Windows machine.
 
-Create a file named:
+Create and activate a Python virtual environment if desired:
 
-```text
-.env
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-and add:
+Install the required packages:
 
-```env
-HOSTEL_SSID=your_wifi_ssid
-PORTAL_IP=192.168.116.1
-PORTAL_PORT=1000
-CAMPUS_USERNAME=your_roll_number
-CAMPUS_PASSWORD=your_password
+```powershell
+pip install PySide6 WMI requests beautifulsoup4 Windows-Toasts
 ```
 
-Replace the placeholder values with the appropriate campus network details and your credentials.
+Then start the application:
 
-The `.env` file contains sensitive information and **must not be committed to Git**.
+```powershell
+python app.py
+```
 
-The repository's `.gitignore` excludes `.env` files from version control.
+On first launch, open **Settings** and enter the campus credentials.
 
 ---
 
-### 3. Clone the Repository
+## Running Automatically on Windows
 
-Clone the repository to a permanent location on your system.
+The current application is a GUI/tray application, so the old hidden-script launch mechanism is no longer required.
 
-A permanent location is recommended because Windows Task Scheduler will launch the application from the project directory.
+The application can be configured in **Windows Task Scheduler** to start `app.py` automatically when the user logs in.
 
----
-
-## Testing Manually
-
-Before configuring Task Scheduler, test the application manually.
-
-Open a Command Prompt in the project directory:
-
-```cmd
-cd CampusAuthenticator
-```
-
-Then run:
-
-```cmd
-python main.py
-```
-
-CampusAuthenticator will:
-
-1. Check the current Wi-Fi connection.
-2. Verify whether the connected SSID matches `HOSTEL_SSID`.
-3. Check whether a previously persisted FortiGate session exists.
-4. Attempt to recover the previous session when possible.
-5. Detect the captive portal if authentication is required.
-6. Submit the configured credentials.
-7. Persist the new keepalive URL after successful authentication.
-8. Start the keepalive mechanism.
-9. Listen for Windows network events.
-10. Stop the keepalive when the Wi-Fi connection is lost.
-11. Attempt to log out of the FortiGate session when possible.
-12. Re-authenticate when necessary.
-
-You can test the event-driven behavior by disconnecting and reconnecting to the configured Wi-Fi network.
-
----
-
-## Session Persistence
-
-CampusAuthenticator persists the FortiGate keepalive URL in:
+The intended current launch target is:
 
 ```text
-storage/session.json
+python.exe app.py
 ```
 
-The session lifecycle is:
-
-```text
-Successful Login
-       │
-       ▼
-FortiGate returns keepalive URL
-       │
-       ▼
-Save keepalive URL
-       │
-       ▼
-storage/session.json
-       │
-       ▼
-Start Keepalive
-```
-
-When the application starts again:
-
-```text
-Application Start
-       │
-       ▼
-Load session.json
-       │
-       ▼
-Previous session available?
-       │
-   ┌───┴────┐
-   │        │
-  Yes       No
-   │        │
-   ▼        ▼
-Attempt     Check Internet
-Recovery
-   │
- ┌─┴──────┐
- │        │
-Valid    Invalid
- │        │
- ▼        ▼
-Start    Clear old
-Keepalive session
- │        │
- └───┬────┘
-     ▼
-Check Internet / Authenticate if necessary
-```
-
-The persisted keepalive URL represents a specific FortiGate authentication session.
-
-If the session is still active, CampusAuthenticator can resume using that session without performing a new login.
-
-If the session has expired or been invalidated, the stored session information is cleared and the application falls back to the normal authentication flow when required.
-
-Session persistence does **not** store the campus username or password. Credentials remain in `.env`.
-
----
-
-## Logging
-
-CampusAuthenticator automatically maintains daily log files inside the `logs` directory.
-
-For example:
-
-```text
-logs/
-├── authenticator-2026-09-05.log
-├── authenticator-2026-09-04.log
-├── authenticator-2026-09-03.log
-└── authenticator-2026-09-02.log
-```
-
-Each log entry is timestamped:
-
-```text
-[2026-09-05 22:14:31] CampusAuthenticator started
-[2026-09-05 22:14:31] Checking initial network state...
-[2026-09-05 22:14:31] Already connected to hostel WiFi
-```
-
-A new log file is automatically created when the date changes.
-
-Logs older than **three days** are automatically removed, preventing the log directory from growing indefinitely while still retaining recent logs for troubleshooting.
-
-The application handles log rotation internally, so `start.bat` does not need to redirect stdout or stderr to a log file.
-
----
-
-## Automating it with Windows Task Scheduler
-
-The recommended way to run CampusAuthenticator is as a background task that starts automatically when you log into Windows.
-
-### 1. Open Task Scheduler
-
-Open the Windows Start Menu and search for:
-
-**Task Scheduler**
-
-Click **Create Basic Task...** from the right-hand pane.
-
-### 2. Create the Task
-
-Use:
-
-**Name:**
-
-```text
-CampusAuthenticator
-```
-
-**Trigger:**
-
-```text
-When I log on
-```
-
-**Action:**
-
-```text
-Start a program
-```
-
-### 3. Configure the Program
-
-**Program/script:**
-
-```text
-wscript.exe
-```
-
-**Add arguments:**
+The previous background-script launcher:
 
 ```text
 run_hidden.vbs
-```
-
-**Start in:**
-
-Enter the absolute path to the directory where you cloned the repository.
-
-Then click **Finish**.
-
-The VBS launcher allows the Python process to run without leaving a visible Command Prompt window.
-
----
-
-## Background Operation
-
-Once configured, the application runs continuously in the background.
-
-The general lifecycle is:
-
-```text
-Windows starts
-      │
-      ▼
-Task Scheduler
-      │
-      ▼
-run_hidden.vbs
-      │
-      ▼
+    ↓
 start.bat
-      │
-      ▼
+    ↓
 main.py
-      │
-      ▼
-Check current Wi-Fi
-      │
-      ├── Not target Wi-Fi ──────────► Wait for network event
-      │
-      └── Target Wi-Fi
-              │
-              ▼
-       Check persisted session
-              │
-        ┌─────┴─────┐
-        │           │
-   Session found   No session
-        │           │
-        ▼           ▼
-  Try recovery   Check Internet
-        │           │
-     ┌──┴───┐    ┌──┴──────┐
-     │      │    │         │
-   Valid  Invalid Yes       No
-     │      │    │         │
-     ▼      ▼    ▼         ▼
- Keepalive Clear  CONNECTED Fresh Login
-     │     session    │
-     │      │         │
-     └──────┴─────────┘
-              │
-              ▼
-       Listen for WMI Events
-              │
-       ┌──────┴──────┐
-       ▼             ▼
-   Connected     Disconnected
-       │             │
-       ▼             ▼
- Verify/Recover   Stop Keepalive
-       │             │
-       │             ▼
-       │          Attempt Logout
-       │             │
-       └─────────────┴──────► Wait for reconnect
 ```
 
-The application does not continuously poll the network. Network state changes are detected through Windows WMI events.
+is no longer part of the application architecture.
 
 ---
 
-## Stopping the Service
+## Manual Controls
 
-If you want to manually stop CampusAuthenticator, use:
+The application provides controls for common actions such as:
 
-```text
-stop.bat
-```
+### Login
 
-The normal shutdown process stops the keepalive mechanism and attempts to log out of the campus captive portal before terminating the application.
+Attempts to authenticate to the campus captive portal using the saved credentials.
 
-When logout succeeds, the persisted session information is removed.
+### Logout
 
-If the application is stopped through Task Scheduler, terminated forcefully, or otherwise unable to perform its normal shutdown sequence, the clean logout sequence may not run.
+Terminates the current portal session and stops the keepalive process.
 
-In such cases, the persisted session information may remain so that the application can attempt session recovery the next time it starts.
+A manually initiated logout also temporarily prevents the automatic authentication mechanism from immediately logging back in.
 
----
+### Refresh
 
-## Security
+Refreshes the application's current network/authentication state.
 
-The following information should **never be committed to the repository**:
+### Settings
 
-* Campus username
-* Campus password
-* FortiGate session tokens
-* Other private configuration values
+Allows the saved campus username and password to be changed.
 
-Credentials are stored locally in:
+### Exit
 
-```text
-.env
-```
-
-The current FortiGate session information is stored locally in:
-
-```text
-storage/session.json
-```
-
-Both files should remain local to your machine.
-
-If sharing the project publicly, make sure both are excluded by `.gitignore`.
+Stops the application and closes the tray application.
 
 ---
 
 ## Troubleshooting
 
-### Wi-Fi is connected but authentication does not start
+### Application does not authenticate
 
-Check that the SSID in `.env` exactly matches the Wi-Fi network name:
-
-```env
-HOSTEL_SSID=your_wifi_ssid
-```
-
-You can manually verify the detected Wi-Fi information using:
-
-```cmd
-python -m network.wifi
-```
-
----
-
-### The application finds a previous session but cannot recover it
-
-Check the latest log file in:
+Check the application log files in:
 
 ```text
 logs/
 ```
 
-You may see:
+Confirm that:
+
+* The machine is connected to the campus network.
+* The active network interface is detected.
+* Credentials in Settings are correct.
+* The FortiGate captive portal is reachable.
+
+### Application shows no network connection
+
+The application determines the active interface using the Windows routing table and network adapter information.
+
+Check whether Windows itself has a valid network connection and a default route.
+
+Virtual adapters, VPN interfaces, and similar adapters may intentionally be ignored.
+
+### Credentials were changed but authentication still uses the previous credentials
+
+Open Settings and verify that the new credentials were saved.
+
+The application cancels older credential-change authentication attempts so that the most recently saved credentials take precedence.
+
+### Session keeps expiring
+
+Check the application logs for keepalive activity and confirm that the campus network remains connected.
+
+### Login works manually but automatic login fails
+
+Check the authentication and portal logs for the failed attempt.
+
+The captive portal endpoint is discovered dynamically, so hard-coded portal IP or port configuration is not required.
+
+---
+
+## Security Notes
+
+Campus credentials are stored locally in:
 
 ```text
-Previous session found — attempting session recovery...
-Attempting to recover previous FortiGate session...
-Previous session could not be recovered
+storage/config.json
 ```
 
-If the persisted session has expired, the application will clear the stale session information and fall back to checking Internet connectivity or performing a fresh authentication when required.
+The application does not use a `.env` file for credentials or portal configuration.
 
----
-
-### Authentication is failing
-
-Check the latest log file in:
+The persisted session information is stored separately in:
 
 ```text
-logs/
+storage/session.json
 ```
 
-The application logs authentication attempts and network events with timestamps.
-
-Also verify:
-
-```env
-PORTAL_IP=your_captive_portal_ip
-PORTAL_PORT=your_captive_portal_port
-CAMPUS_USERNAME=your_roll_number
-CAMPUS_PASSWORD=your_password
-```
+These files should be treated as sensitive local application data and should not be committed to a public repository.
 
 ---
 
-### The application does not start after Windows login
+## Development Notes
 
-Check the Task Scheduler configuration:
+CampusAuthenticator is structured around a central controller with separate modules for:
 
-* Task is enabled.
-* Trigger is **When I log on**.
-* Program is `wscript.exe`.
-* Arguments are `run_hidden.vbs`.
-* **Start in** points to the project directory.
-* Python is available to the account running the task.
-
-You can also run:
-
-```cmd
-start.bat
+```text
+GUI
+ │
+ ▼
+Controller
+ ├── Network detection
+ ├── Portal client
+ ├── Session storage
+ └── Notifications
 ```
 
-manually to verify that the application itself starts correctly.
+This separation keeps the GUI independent from the low-level captive-portal implementation.
+
+The application is designed around network events rather than requiring the user to manually monitor or restart the authentication process.
 
 ---
+
+## Current Architecture
+
+The current version is a transition from the original background-only authentication script to a full Windows GUI/tray application.
+
+The old architecture used `main.py` as a background entry point and required additional launcher scripts for Task Scheduler.
+
+The current application instead uses:
+
+```text
+app.py
+   │
+   ▼
+TrayApplication
+   │
+   ├── MainWindow
+   ├── Settings
+   │
+   ▼
+AuthController
+   │
+   ├── Network detection
+   ├── Captive portal detection
+   ├── Authentication
+   ├── Session recovery
+   ├── Keepalive
+   └── Notifications
+```
+
+This is the architecture documented and maintained by the current version of CampusAuthenticator.
 
 ## License
 
 This project is intended for personal/educational use on the NITC campus network.
+
+The project does not grant any additional rights to access or use the NITC network. Users are responsible for complying with applicable campus network policies and regulations.
