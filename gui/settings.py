@@ -98,12 +98,6 @@ class SettingsPage(QWidget):
             15
         )
 
-        self.ssid_input = QLineEdit()
-
-        self.ssid_input.setPlaceholderText(
-            "Wi-Fi network name"
-        )
-
         self.username_input = QLineEdit()
 
         self.username_input.setPlaceholderText(
@@ -118,11 +112,6 @@ class SettingsPage(QWidget):
 
         self.password_input.setEchoMode(
             QLineEdit.EchoMode.Password
-        )
-
-        form_layout.addRow(
-            "Wi-Fi SSID",
-            self.ssid_input
         )
 
         form_layout.addRow(
@@ -198,13 +187,6 @@ class SettingsPage(QWidget):
         if not config:
             return
 
-        self.ssid_input.setText(
-            config.get(
-                "ssid",
-                ""
-            )
-        )
-
         self.username_input.setText(
             config.get(
                 "username",
@@ -255,7 +237,6 @@ class SettingsPage(QWidget):
         )
 
         save_config(
-            self.ssid_input.text().strip(),
             new_username,
             new_password
         )

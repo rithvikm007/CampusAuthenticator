@@ -472,16 +472,10 @@ class MainWindow(QMainWindow):
             5
         )
 
-        self.wifi_label = self.add_info_row(
+        self.network_label = self.add_info_row(
             network_layout,
-            "Wi-Fi",
+            "Interface",
             "Not Connected"
-        )
-
-        self.ssid_label = self.add_info_row(
-            network_layout,
-            "SSID",
-            "—"
         )
 
         layout.addWidget(
@@ -941,21 +935,19 @@ class MainWindow(QMainWindow):
                 "color: #71717a;"
             )
 
-        if status["wifi_connected"]:
+        network_interface = status["network_interface"]
 
-            self.wifi_label.setText(
-                "Connected"
+        if network_interface:
+
+            self.network_label.setText(
+                network_interface
             )
 
         else:
 
-            self.wifi_label.setText(
+            self.network_label.setText(
                 "Not Connected"
             )
-
-        self.ssid_label.setText(
-            status["ssid"] or "—"
-        )
 
         if state == AuthState.AUTHENTICATED:
 

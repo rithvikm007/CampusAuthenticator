@@ -2,7 +2,10 @@ import threading
 import time
 from enum import Enum
 
-from network.events import watch_network_events
+from network.events import (
+    get_active_interface,
+    watch_network_events
+)
 from notifications import notify
 from portal.client import (
     NetworkStatus,
@@ -27,7 +30,7 @@ class AuthController:
 
         self.state = AuthState.DISCONNECTED
         self.wifi_connected = False
-        self.ssid = None
+        self.network_interface = None
         self.keepalive_active = False
 
         self.client = PortalClient()
@@ -57,7 +60,7 @@ class AuthController:
         return {
             "state": self.state,
             "wifi_connected": self.wifi_connected,
-            "ssid": self.ssid,
+            "network_interface": self.network_interface,
             "keepalive_active": (
                 self.client._keepalive_thread
                 is not None
@@ -68,7 +71,11 @@ class AuthController:
             "cooldown_remaining": cooldown_remaining,
         }
 
-    def handle_event(self, status):
+    def handle_event(
+        self,
+        status,
+        interface=None
+    ):
 
         if self.stop_event.is_set():
             return
@@ -80,21 +87,48 @@ class AuthController:
                 f"  [state={self.state.value}]"
             )
 
+            if interface:
+
+                print(
+                    "Active network interface:",
+                    interface
+                )
+
             if status == "Connected":
 
-                self._on_connected()
+                self._on_connected(
+                    interface
+                )
 
             elif status == "Disconnected":
 
                 self._on_disconnected()
 
-    def _on_connected(self):
+    def _on_connected(
+        self,
+        interface=None
+    ):
 
         if self.stop_event.is_set():
             return
 
+        if interface:
+
+            self.network_interface = interface
+
+        else:
+
+            self.network_interface = (
+                get_active_interface()
+            )
+
         print(
             "Network connection detected."
+        )
+
+        print(
+            "Network interface:",
+            self.network_interface
         )
 
         network_status = self.client.detect_network()
@@ -266,6 +300,18 @@ class AuthController:
         # The network may have changed during the delay.
         network_status = self.client.detect_network()
 
+        # Refresh the interface after the network has settled.
+        active_interface = get_active_interface()
+
+        if active_interface:
+
+            self.network_interface = active_interface
+
+            print(
+                "Active network interface after stabilization:",
+                self.network_interface
+            )
+
         if network_status != NetworkStatus.CAPTIVE_PORTAL:
 
             if network_status == NetworkStatus.INTERNET_AVAILABLE:
@@ -431,6 +477,12 @@ class AuthController:
                     self.state = AuthState.DISCONNECTED
 
                 return False
+
+            active_interface = get_active_interface()
+
+            if active_interface:
+
+                self.network_interface = active_interface
 
             print(
                 f"Authentication attempt "
@@ -615,6 +667,12 @@ class AuthController:
 
             network_status = self.client.detect_network()
 
+            active_interface = get_active_interface()
+
+            if active_interface:
+
+                self.network_interface = active_interface
+
             if network_status == NetworkStatus.NO_INTERNET:
 
                 self.wifi_connected = False
@@ -686,7 +744,7 @@ class AuthController:
     def _on_disconnected(self):
 
         self.wifi_connected = False
-        self.ssid = None
+        self.network_interface = None
 
         if self.state == AuthState.AUTHENTICATED:
 
@@ -771,6 +829,12 @@ class AuthController:
 
                 return False
 
+            active_interface = get_active_interface()
+
+            if active_interface:
+
+                self.network_interface = active_interface
+
             self.wifi_connected = True
 
             print(
@@ -829,10 +893,22 @@ class AuthController:
 
             if network_status == NetworkStatus.CAPTIVE_PORTAL:
 
+                active_interface = get_active_interface()
+
+                if active_interface:
+
+                    self.network_interface = active_interface
+
                 self.wifi_connected = True
                 self.state = AuthState.CONNECTED
 
             elif network_status == NetworkStatus.INTERNET_AVAILABLE:
+
+                active_interface = get_active_interface()
+
+                if active_interface:
+
+                    self.network_interface = active_interface
 
                 self.wifi_connected = False
                 self.state = AuthState.CONNECTED
@@ -840,9 +916,8 @@ class AuthController:
             else:
 
                 self.wifi_connected = False
+                self.network_interface = None
                 self.state = AuthState.DISCONNECTED
-
-            self.ssid = None
 
             print(
                 "Manual logout successful"
@@ -875,6 +950,15 @@ class AuthController:
 
         print(
             "Checking initial network state..."
+        )
+
+        self.network_interface = (
+            get_active_interface()
+        )
+
+        print(
+            "Initial network interface:",
+            self.network_interface
         )
 
         network_status = self.client.detect_network()
@@ -1017,6 +1101,7 @@ class AuthController:
         else:
 
             self.wifi_connected = False
+            self.network_interface = None
             self.state = AuthState.DISCONNECTED
 
             print(

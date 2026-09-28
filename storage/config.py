@@ -9,102 +9,49 @@ CONFIG_FILE = os.path.join(
 
 
 def config_exists():
-    """
-    Check whether a saved application configuration exists.
-    """
-
     return os.path.exists(CONFIG_FILE)
 
 
-def save_config(
-    ssid,
-    username,
-    password
-):
-    """
-    Save application configuration.
-    """
+def save_config(username, password):
 
     data = {
-        "ssid": ssid,
         "username": username,
         "password": password
     }
 
-    with open(
-        CONFIG_FILE,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            data,
-            file,
-            indent=4
-        )
+    with open(CONFIG_FILE, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=4)
 
 
 def load_config():
-    """
-    Load the saved application configuration.
-
-    Returns:
-        Configuration dictionary if valid,
-        otherwise None.
-    """
 
     if not os.path.exists(CONFIG_FILE):
         return None
 
     try:
 
-        with open(
-            CONFIG_FILE,
-            "r",
-            encoding="utf-8"
-        ) as file:
-
+        with open(CONFIG_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
 
-        if not all(
-            key in data
-            for key in (
-                "ssid",
-                "username",
-                "password"
-            )
-        ):
-
+        if not all(key in data for key in ("username", "password")):
             return None
 
-        return data
+        return {
+            "username": data["username"],
+            "password": data["password"]
+        }
 
-    except (
-        json.JSONDecodeError,
-        OSError
-    ):
-
+    except (json.JSONDecodeError, OSError):
         return None
 
 
 def clear_config():
-    """
-    Delete the saved application configuration.
-    """
 
     if os.path.exists(CONFIG_FILE):
-
         os.remove(CONFIG_FILE)
 
 
 if __name__ == "__main__":
 
-    print(
-        "Config file:",
-        CONFIG_FILE
-    )
-
-    print(
-        "Config exists:",
-        config_exists()
-    )
+    print("Config file:", CONFIG_FILE)
+    print("Config exists:", config_exists())
