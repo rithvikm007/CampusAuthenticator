@@ -3,7 +3,6 @@ import threading
 from enum import Enum
 
 from portal.parser import extract_login_data
-from config import PORTAL_URL
 from storage.config import load_config
 from storage.session import (
     save_session,
