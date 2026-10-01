@@ -1,14 +1,16 @@
 import json
-import os
+
+from core.paths import data_path
 
 
-SESSION_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
+SESSION_FILE = data_path(
+    "storage",
     "session.json"
 )
 
 
 def save_session(keepalive_url):
+
     """
     Save the current FortiGate session information.
     """
@@ -31,6 +33,7 @@ def save_session(keepalive_url):
 
 
 def load_session():
+
     """
     Load the previously saved FortiGate session.
 
@@ -39,7 +42,7 @@ def load_session():
         otherwise None.
     """
 
-    if not os.path.exists(SESSION_FILE):
+    if not SESSION_FILE.exists():
         return None
 
     try:
@@ -52,21 +55,26 @@ def load_session():
 
             data = json.load(file)
 
-        return data.get("keepalive_url")
+        return data.get(
+            "keepalive_url"
+        )
 
-    except (json.JSONDecodeError, OSError):
+    except (
+        json.JSONDecodeError,
+        OSError
+    ):
 
         return None
 
 
 def clear_session():
+
     """
     Delete the persisted FortiGate session.
     """
 
-    if os.path.exists(SESSION_FILE):
-
-        os.remove(SESSION_FILE)
+    if SESSION_FILE.exists():
+        SESSION_FILE.unlink()
 
 
 if __name__ == "__main__":
@@ -77,13 +85,23 @@ if __name__ == "__main__":
     )
 
     print("Saving session...")
-    save_session(test_url)
+
+    save_session(
+        test_url
+    )
 
     print("Loading session...")
-    print(load_session())
+
+    print(
+        load_session()
+    )
 
     print("Clearing session...")
+
     clear_session()
 
     print("Loading after clear...")
-    print(load_session())
+
+    print(
+        load_session()
+    )

@@ -1,15 +1,17 @@
 import json
-import os
+
+from core.paths import data_path
 
 
-CONFIG_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
+CONFIG_FILE = data_path(
+    "storage",
     "config.json"
 )
 
 
 def config_exists():
-    return os.path.exists(CONFIG_FILE)
+
+    return CONFIG_FILE.exists()
 
 
 def save_config(username, password):
@@ -19,21 +21,38 @@ def save_config(username, password):
         "password": password
     }
 
-    with open(CONFIG_FILE, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=4)
+    with open(
+        CONFIG_FILE,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            data,
+            file,
+            indent=4
+        )
 
 
 def load_config():
 
-    if not os.path.exists(CONFIG_FILE):
+    if not CONFIG_FILE.exists():
         return None
 
     try:
 
-        with open(CONFIG_FILE, "r", encoding="utf-8") as file:
+        with open(
+            CONFIG_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
             data = json.load(file)
 
-        if not all(key in data for key in ("username", "password")):
+        if not all(
+            key in data
+            for key in ("username", "password")
+        ):
             return None
 
         return {
@@ -41,17 +60,28 @@ def load_config():
             "password": data["password"]
         }
 
-    except (json.JSONDecodeError, OSError):
+    except (
+        json.JSONDecodeError,
+        OSError
+    ):
+
         return None
 
 
 def clear_config():
 
-    if os.path.exists(CONFIG_FILE):
-        os.remove(CONFIG_FILE)
+    if CONFIG_FILE.exists():
+        CONFIG_FILE.unlink()
 
 
 if __name__ == "__main__":
 
-    print("Config file:", CONFIG_FILE)
-    print("Config exists:", config_exists())
+    print(
+        "Config file:",
+        CONFIG_FILE
+    )
+
+    print(
+        "Config exists:",
+        config_exists()
+    )

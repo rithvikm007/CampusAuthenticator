@@ -22,6 +22,11 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Runtime data
 storage/session.json
 storage/config.json
 tools/
+
+# PyInstaller
+build/
+dist/

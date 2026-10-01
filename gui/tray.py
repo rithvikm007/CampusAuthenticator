@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import (
     QColor,
@@ -14,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.controller import AuthController, AuthState
+from core.paths import resource_path
 from gui.window import MainWindow
 from notifications import get_pending_notifications
 
@@ -29,10 +28,9 @@ class TrayApplication:
 
         self.application = QApplication([])
 
-        icon_path = (
-            Path(__file__).resolve().parent.parent
-            / "assets"
-            / "icon.ico"
+        icon_path = resource_path(
+            "assets",
+            "icon.ico"
         )
 
         self.application.setWindowIcon(
@@ -150,10 +148,9 @@ class TrayApplication:
         state
     ):
 
-        icon_path = (
-            Path(__file__).resolve().parent.parent
-            / "assets"
-            / "icon.png"
+        icon_path = resource_path(
+            "assets",
+            "icon.png"
         )
 
         source = QPixmap(

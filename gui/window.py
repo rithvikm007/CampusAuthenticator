@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -16,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.controller import AuthController, AuthState
+from core.paths import resource_path
 from gui.settings import SettingsPage
 
 
@@ -56,10 +55,9 @@ class MainWindow(QMainWindow):
         self.credentials_worker = None
         self.credentials_restart_pending = False
 
-        icon_path = (
-            Path(__file__).resolve().parent.parent
-            / "assets"
-            / "icon.png"
+        icon_path = resource_path(
+            "assets",
+            "icon.png"
         )
 
         self.setWindowIcon(

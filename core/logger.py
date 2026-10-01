@@ -1,5 +1,6 @@
 import datetime
-import os
+
+from core.paths import data_path
 
 
 class TimestampLogger:
@@ -9,17 +10,12 @@ class TimestampLogger:
         self.stream = stream
         self.at_line_start = True
 
-        self.log_dir = os.path.join(
-            os.path.dirname(
-                os.path.dirname(
-                    os.path.abspath(__file__)
-                )
-            ),
+        self.log_dir = data_path(
             "logs"
         )
 
-        os.makedirs(
-            self.log_dir,
+        self.log_dir.mkdir(
+            parents=True,
             exist_ok=True
         )
 
@@ -44,9 +40,8 @@ class TimestampLogger:
             f"authenticator-{today.strftime('%Y-%m-%d')}.log"
         )
 
-        filepath = os.path.join(
-            self.log_dir,
-            filename
+        filepath = (
+            self.log_dir / filename
         )
 
         self.log_file = open(
@@ -64,35 +59,40 @@ class TimestampLogger:
             - datetime.timedelta(days=3)
         )
 
-        for filename in os.listdir(self.log_dir):
+        for filepath in self.log_dir.iterdir():
+
+            if not filepath.is_file():
+                continue
+
+            filename = filepath.name
 
             if not filename.startswith(
                 "authenticator-"
             ):
                 continue
 
-            if not filename.endswith(".log"):
+            if not filename.endswith(
+                ".log"
+            ):
                 continue
 
             try:
 
                 date_string = filename[
-                    len("authenticator-"):-len(".log")
+                    len("authenticator-"):
+                    -len(".log")
                 ]
 
-                file_date = datetime.datetime.strptime(
-                    date_string,
-                    "%Y-%m-%d"
-                ).date()
+                file_date = (
+                    datetime.datetime.strptime(
+                        date_string,
+                        "%Y-%m-%d"
+                    ).date()
+                )
 
                 if file_date < cutoff:
 
-                    os.remove(
-                        os.path.join(
-                            self.log_dir,
-                            filename
-                        )
-                    )
+                    filepath.unlink()
 
             except ValueError:
 
@@ -110,17 +110,24 @@ class TimestampLogger:
             and message.strip()
         ):
 
-            timestamp = datetime.datetime.now().strftime(
-                "[%Y-%m-%d %H:%M:%S] "
+            timestamp = (
+                datetime.datetime.now().strftime(
+                    "[%Y-%m-%d %H:%M:%S] "
+                )
             )
 
-            self.log_file.write(timestamp)
+            self.log_file.write(
+                timestamp
+            )
 
-        self.log_file.write(message)
+        self.log_file.write(
+            message
+        )
+
         self.log_file.flush()
 
-        self.at_line_start = message.endswith(
-            "\n"
+        self.at_line_start = (
+            message.endswith("\n")
         )
 
     def flush(self):
