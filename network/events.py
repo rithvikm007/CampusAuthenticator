@@ -90,8 +90,13 @@ def get_active_interface():
             if _is_virtual_adapter(adapter):
                 continue
 
-            connection_id = (adapter.NetConnectionID or "").strip().lower()
-            adapter_name = (adapter.Name or "").strip().lower()
+            connection_id = (
+                adapter.NetConnectionID or ""
+            ).strip().lower()
+
+            adapter_name = (
+                adapter.Name or ""
+            ).strip().lower()
 
             # NetConnectionID is the most reliable indicator here.
             if connection_id == "wi-fi":
@@ -115,7 +120,11 @@ def get_active_interface():
                 return "Wi-Fi"
 
             # Final fallback using AdapterTypeID.
-            adapter_type = getattr(adapter, "AdapterTypeID", None)
+            adapter_type = getattr(
+                adapter,
+                "AdapterTypeID",
+                None
+            )
 
             if adapter_type == 9:
                 return "Wi-Fi"
@@ -126,7 +135,10 @@ def get_active_interface():
         return None
 
     except Exception as e:
-        print("Failed to detect active network interface:", repr(e))
+        print(
+            "Failed to detect active network interface:",
+            repr(e)
+        )
         return None
 
 
@@ -144,6 +156,7 @@ def watch_network_events(callback, stop_event):
     watcher = create_watcher()
 
     while not stop_event.is_set():
+
         try:
             event = watcher(timeout_ms=1000)
 
@@ -151,25 +164,76 @@ def watch_network_events(callback, stop_event):
             continue
 
         except wmi.x_wmi as e:
+
             if stop_event.is_set():
                 break
 
-            print("WMI event watcher error:", repr(e))
-            print("Recreating network event watcher...")
+            print(
+                "WMI event watcher error:",
+                repr(e)
+            )
+
+            print(
+                "Recreating network event watcher..."
+            )
 
             if stop_event.wait(2):
                 break
 
             try:
                 watcher = create_watcher()
-                print("Network event watcher restarted")
+
+                print(
+                    "Network event watcher restarted"
+                )
+
+                # ------------------------------------------------------
+                # Reconcile the current network state.
+                #
+                # A WMI watcher can fail during hibernate/resume.
+                # Network changes that occurred while the watcher was
+                # unavailable may therefore never generate an event.
+                #
+                # Check the current physical interface once after
+                # recreating the watcher and feed the result through
+                # the existing controller event path.
+                # ------------------------------------------------------
+
+                active_interface = get_active_interface()
+
+                if active_interface:
+
+                    print(
+                        "Network state after WMI recovery:",
+                        active_interface
+                    )
+
+                    callback(
+                        "Connected",
+                        active_interface
+                    )
+
+                else:
+
+                    print(
+                        "No active physical network interface "
+                        "after WMI recovery"
+                    )
+
+                    callback(
+                        "Disconnected"
+                    )
 
             except Exception as recreate_error:
+
                 print(
                     "Failed to recreate WMI watcher:",
                     repr(recreate_error)
                 )
-                print("Will retry watcher creation...")
+
+                print(
+                    "Will retry watcher creation..."
+                )
 
                 if stop_event.wait(5):
                     break
@@ -179,8 +243,10 @@ def watch_network_events(callback, stop_event):
         if not event.Name:
             continue
 
-        # Ignore virtual adapters such as VPN, Hyper-V, VirtualBox, etc.
+        # Ignore virtual adapters such as VPN, Hyper-V,
+        # VirtualBox, etc.
         if hasattr(event, "PhysicalAdapter"):
+
             if not event.PhysicalAdapter:
                 continue
 
@@ -189,19 +255,47 @@ def watch_network_events(callback, stop_event):
             "Unknown"
         )
 
-        if status not in ("Connected", "Disconnected"):
+        if status not in (
+            "Connected",
+            "Disconnected"
+        ):
             continue
 
-        callback(status)
+        # Determine the current physical interface when a
+        # connection event is received.
+        interface = None
 
-    print("Network event listener stopped")
+        if status == "Connected":
+            interface = get_active_interface()
+
+        callback(
+            status,
+            interface
+        )
+
+    print(
+        "Network event listener stopped"
+    )
 
 
 if __name__ == "__main__":
+
     stop_event = __import__("threading").Event()
 
-    def test_callback(status):
-        print("Network status:", status)
+    def test_callback(status, interface=None):
+        print(
+            "Network status:",
+            status,
+            "| Interface:",
+            interface
+        )
 
-    print("Active interface:", get_active_interface())
-    watch_network_events(test_callback, stop_event)
+    print(
+        "Active interface:",
+        get_active_interface()
+    )
+
+    watch_network_events(
+        test_callback,
+        stop_event
+    )
